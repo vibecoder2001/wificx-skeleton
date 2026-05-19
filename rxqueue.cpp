@@ -59,14 +59,6 @@ EvtAdapterCreateRxQueue(
 
     NET_EXTENSION_QUERY_INIT(
         &extension,
-        NET_FRAGMENT_EXTENSION_LOGICAL_ADDRESS_NAME,
-        NET_FRAGMENT_EXTENSION_LOGICAL_ADDRESS_VERSION_1,
-        NetExtensionTypeFragment);
-
-    NetRxQueueGetExtension(rxQueue, &extension, &rx->LogicalAddressExtension);
-
-    NET_EXTENSION_QUERY_INIT(
-        &extension,
         NET_PACKET_EXTENSION_HASH_NAME,
         NET_PACKET_EXTENSION_HASH_VERSION_1,
         NetExtensionTypePacket);

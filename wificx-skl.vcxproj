@@ -204,6 +204,7 @@
   <ItemGroup>
     <ClInclude Include="adapter.h" />
     <ClInclude Include="device.h" />
+    <ClInclude Include="fakebss.h" />
     <ClInclude Include="forward.h" />
     <ClInclude Include="power.h" />
     <ClInclude Exclude="@(ClInclude)" Include="precomp.h" />
@@ -217,6 +218,7 @@
     <ClCompile Include="adapter.cpp" />
     <ClCompile Include="device.cpp" />
     <ClCompile Include="driver.cpp" />
+    <ClCompile Include="fakebss.cpp" />
     <ClCompile Include="power.cpp" />
     <ClCompile Include="rxqueue.cpp" />
     <ClCompile Include="txqueue.cpp" />

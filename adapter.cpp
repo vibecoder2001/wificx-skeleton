@@ -55,38 +55,43 @@ Exit:
 }
 
 static
+EVT_NET_ADAPTER_RETURN_RX_BUFFER EvtAdapterReturnRxBuffer;
+
+_Use_decl_annotations_
+void
+EvtAdapterReturnRxBuffer(
+    _In_ NETADAPTER netAdapter,
+    _In_ PVOID rxBufferVa,
+    _In_ PVOID rxBufferContext
+)
+{
+    UNREFERENCED_PARAMETER(netAdapter);
+    UNREFERENCED_PARAMETER(rxBufferVa);
+    UNREFERENCED_PARAMETER(rxBufferContext);
+    // No-op: we never produce RX buffers in the fake driver.
+}
+
+static
 void
 MtkAdapterSetDatapathCapabilities(
     _In_ MTK_ADAPTER const* adapter
 )
 {
-    NET_ADAPTER_DMA_CAPABILITIES txDmaCapabilities;
-    NET_ADAPTER_DMA_CAPABILITIES_INIT(&txDmaCapabilities, adapter->DmaEnabler);
-
     NET_ADAPTER_TX_CAPABILITIES txCapabilities;
-    NET_ADAPTER_TX_CAPABILITIES_INIT_FOR_DMA(
-        &txCapabilities,
-        &txDmaCapabilities,
-        1);
-
+    NET_ADAPTER_TX_CAPABILITIES_INIT(&txCapabilities, 1);
     txCapabilities.FragmentRingNumberOfElementsHint = MTK_MIN_TCB * MTK_MAX_PHYS_BUF_COUNT;
     txCapabilities.MaximumNumberOfFragments = MTK_MAX_PHYS_BUF_COUNT;
 
-    NET_ADAPTER_DMA_CAPABILITIES rxDmaCapabilities;
-    NET_ADAPTER_DMA_CAPABILITIES_INIT(&rxDmaCapabilities, adapter->DmaEnabler);
-
     NET_ADAPTER_RX_CAPABILITIES rxCapabilities;
-    NET_ADAPTER_RX_CAPABILITIES_INIT_SYSTEM_MANAGED_DMA(
+    NET_ADAPTER_RX_CAPABILITIES_INIT_DRIVER_MANAGED(
         &rxCapabilities,
-        &rxDmaCapabilities,
+        EvtAdapterReturnRxBuffer,
         MTK_MAX_PACKET_SIZE + FRAME_CRC_SIZE + RSVD_BUF_SIZE,
         1);
-
     rxCapabilities.FragmentBufferAlignment = 64;
     rxCapabilities.FragmentRingNumberOfElementsHint = 32;
 
     NetAdapterSetDataPathCapabilities(adapter->NetAdapter, &txCapabilities, &rxCapabilities);
-
 }
 
 _Use_decl_annotations_
@@ -113,10 +118,10 @@ MtkAdapterStart(
         NetAdapterSetLinkLayerCapabilities(adapter->NetAdapter, &linkLayerCapabilities);
         NetAdapterSetLinkLayerMtuSize(adapter->NetAdapter, MTK_MAX_PACKET_SIZE - ETH_LENGTH_OF_HEADER);
 
-        for (ULONG i = 0; i < ETHERNET_ADDRESS_LENGTH; i++)
-        {
-            adapter->PermanentAddress.Address[i] = i;
-        }
+        // Locally-administered MAC (U/L bit set in first octet, unicast).
+        const UCHAR fakeMac[ETHERNET_ADDRESS_LENGTH] =
+            { 0x02, 0x57, 0x49, 0x46, 0x49, 0x01 };
+        RtlCopyMemory(adapter->PermanentAddress.Address, fakeMac, ETHERNET_ADDRESS_LENGTH);
         adapter->PermanentAddress.Length = ETHERNET_ADDRESS_LENGTH;
 
         RtlCopyMemory(&adapter->CurrentAddress, &adapter->PermanentAddress, sizeof(adapter->PermanentAddress));

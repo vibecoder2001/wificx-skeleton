@@ -11,7 +11,6 @@ typedef struct _MTK_TXQUEUE {
 	NET_EXTENSION ChecksumExtension;
 	NET_EXTENSION GsoExtension;
 	NET_EXTENSION VirtualAddressExtension;
-	NET_EXTENSION LogicalAddressExtension;
 	NET_EXTENSION Ieee8021qExtension;
 
 	ULONG QueueId;

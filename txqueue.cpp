@@ -78,14 +78,6 @@ EvtAdapterCreateTxQueue(
 
     NetTxQueueGetExtension(txQueue, &extension, &tx->VirtualAddressExtension);
 
-    NET_EXTENSION_QUERY_INIT(
-        &extension,
-        NET_FRAGMENT_EXTENSION_LOGICAL_ADDRESS_NAME,
-        NET_FRAGMENT_EXTENSION_LOGICAL_ADDRESS_VERSION_1,
-        NetExtensionTypeFragment);
-
-    NetTxQueueGetExtension(txQueue, &extension, &tx->LogicalAddressExtension);
-
     GOTO_IF_NOT_NT_SUCCESS(Exit, status,
         MtkTxQueueInitialize(txQueue, adapter));
 

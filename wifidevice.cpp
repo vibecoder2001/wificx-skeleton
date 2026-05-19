@@ -4,32 +4,6 @@
 #include "wifidevice.h"
 #include "adapter.h"
 
-NTSTATUS
-MtkRegisterScatterGatherDma(
-    _In_ MTK_ADAPTER* adapter)
-{
-    TraceEntryMtkAdapter(adapter);
-
-    WDF_DMA_ENABLER_CONFIG dmaEnablerConfig;
-    WDF_DMA_ENABLER_CONFIG_INIT(&dmaEnablerConfig, WdfDmaProfileScatterGather64, MTK_MAX_PACKET_SIZE);
-    dmaEnablerConfig.Flags |= WDF_DMA_ENABLER_CONFIG_REQUIRE_SINGLE_TRANSFER;
-    dmaEnablerConfig.WdmDmaVersionOverride = 3;
-
-    NTSTATUS status = STATUS_SUCCESS;
-    GOTO_IF_NOT_NT_SUCCESS(Exit, status,
-        WdfDmaEnablerCreate(
-            adapter->WdfDevice,
-            &dmaEnablerConfig,
-            WDF_NO_OBJECT_ATTRIBUTES,
-            &adapter->DmaEnabler),
-        TraceLoggingMtkAdapter(adapter));
-
-Exit:
-
-    TraceExitResult(status);
-    return status;
-}
-
 _Use_decl_annotations_
 NTSTATUS
 EvtWiFiDeviceCreateAdapter(
@@ -70,10 +44,6 @@ EvtWiFiDeviceCreateAdapter(
 
     GOTO_IF_NOT_NT_SUCCESS(Exit, status,
         MtkInitializeAdapterContext(adapter, WdfDevice, netAdapter));
-
-    GOTO_IF_NOT_NT_SUCCESS(Exit, status,
-        MtkRegisterScatterGatherDma(adapter),
-        TraceLoggingMtkAdapter(adapter));
 
     {
         //Temp for barebones init
@@ -132,9 +102,6 @@ EvtWiFiDeviceSendCommand(
     DbgPrint("Command: 0x%x, Input Len: %d, Output Len: %d\n", MessageID, InputBufferLen, OutputBufferLen);
 
     WifiRequestComplete(Request, STATUS_NOT_IMPLEMENTED, 0);
-
-Exit:
-    TraceExit();
 }
 
 _Use_decl_annotations_

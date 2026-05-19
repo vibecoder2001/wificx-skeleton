@@ -41,6 +41,9 @@
     <ClCompile Include="driver.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="fakebss.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="power.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -59,6 +62,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="device.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="fakebss.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="forward.h">

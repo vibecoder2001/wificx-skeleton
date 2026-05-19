@@ -9,7 +9,6 @@ typedef struct _MTK_RXQUEUE {
 
 	NET_EXTENSION ChecksumExtension;
 	NET_EXTENSION VirtualAddressExtension;
-	NET_EXTENSION LogicalAddressExtension;
 	NET_EXTENSION HashValueExtension;
 
 	ULONG QueueId;

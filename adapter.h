@@ -9,8 +9,6 @@ typedef struct _MTK_ADAPTER
     // spin locks
     WDFSPINLOCK Lock;
 
-    WDFDMAENABLER DmaEnabler;
-
     NET_ADAPTER_LINK_LAYER_ADDRESS PermanentAddress;
     NET_ADAPTER_LINK_LAYER_ADDRESS CurrentAddress;
 } MTK_ADAPTER, * PMTK_ADAPTER;
