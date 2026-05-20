@@ -38,6 +38,15 @@ EvtAdapterCreateRxQueue(
         NetRxQueueCreate(rxQueueInit, &rxAttributes, &rxConfig, &rxQueue));
 
     MTK_RXQUEUE* rx = MtkGetRxQueueContext(rxQueue);
+
+    // Non-functional RX buffer pool — see MTK_TXQUEUE comment.
+    rx->FakeRxRingSize = (MTK_MAX_PACKET_SIZE + FRAME_CRC_SIZE + RSVD_BUF_SIZE) * 32;
+    rx->FakeRxRing = ExAllocatePool2(POOL_FLAG_NON_PAGED, rx->FakeRxRingSize, 'qxrW');
+    if (rx->FakeRxRing == NULL) {
+        status = STATUS_INSUFFICIENT_RESOURCES;
+        goto Exit;
+    }
+
     NET_EXTENSION_QUERY extension;
     NET_EXTENSION_QUERY_INIT(
         &extension,
@@ -101,9 +110,11 @@ EvtRxQueueDestroy(
 
     MTK_RXQUEUE* rx = MtkGetRxQueueContext(rxQueue);
 
-    if (rx->RxdArray)
-        WdfObjectDelete(rx->RxdArray);
-    rx->RxdArray = NULL;
+    if (rx->FakeRxRing) {
+        ExFreePool(rx->FakeRxRing);
+        rx->FakeRxRing = NULL;
+        rx->FakeRxRingSize = 0;
+    }
 
     TraceExit();
 }

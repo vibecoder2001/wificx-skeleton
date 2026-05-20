@@ -55,23 +55,6 @@ Exit:
 }
 
 static
-EVT_NET_ADAPTER_RETURN_RX_BUFFER EvtAdapterReturnRxBuffer;
-
-_Use_decl_annotations_
-void
-EvtAdapterReturnRxBuffer(
-    _In_ NETADAPTER netAdapter,
-    _In_ PVOID rxBufferVa,
-    _In_ PVOID rxBufferContext
-)
-{
-    UNREFERENCED_PARAMETER(netAdapter);
-    UNREFERENCED_PARAMETER(rxBufferVa);
-    UNREFERENCED_PARAMETER(rxBufferContext);
-    // No-op: we never produce RX buffers in the fake driver.
-}
-
-static
 void
 MtkAdapterSetDatapathCapabilities(
     _In_ MTK_ADAPTER const* adapter
@@ -83,12 +66,10 @@ MtkAdapterSetDatapathCapabilities(
     txCapabilities.MaximumNumberOfFragments = MTK_MAX_PHYS_BUF_COUNT;
 
     NET_ADAPTER_RX_CAPABILITIES rxCapabilities;
-    NET_ADAPTER_RX_CAPABILITIES_INIT_DRIVER_MANAGED(
+    NET_ADAPTER_RX_CAPABILITIES_INIT_SYSTEM_MANAGED(
         &rxCapabilities,
-        EvtAdapterReturnRxBuffer,
         MTK_MAX_PACKET_SIZE + FRAME_CRC_SIZE + RSVD_BUF_SIZE,
         1);
-    rxCapabilities.FragmentBufferAlignment = 64;
     rxCapabilities.FragmentRingNumberOfElementsHint = 32;
 
     NetAdapterSetDataPathCapabilities(adapter->NetAdapter, &txCapabilities, &rxCapabilities);
@@ -116,7 +97,10 @@ MtkAdapterStart(
             maxRcvLinkSpeed);
 
         NetAdapterSetLinkLayerCapabilities(adapter->NetAdapter, &linkLayerCapabilities);
-        NetAdapterSetLinkLayerMtuSize(adapter->NetAdapter, MTK_MAX_PACKET_SIZE - ETH_LENGTH_OF_HEADER);
+        DbgPrint("MTK: SetLinkLayerCapabilities OK\n");
+        // 802.11 max MSDU is 2304; WiFiCx expects WiFi-sized MTU.
+        NetAdapterSetLinkLayerMtuSize(adapter->NetAdapter, 2304);
+        DbgPrint("MTK: SetLinkLayerMtuSize OK\n");
 
         // Locally-administered MAC (U/L bit set in first octet, unicast).
         const UCHAR fakeMac[ETHERNET_ADDRESS_LENGTH] =
@@ -128,13 +112,22 @@ MtkAdapterStart(
 
         NetAdapterSetPermanentLinkLayerAddress(adapter->NetAdapter, &adapter->PermanentAddress);
         NetAdapterSetCurrentLinkLayerAddress(adapter->NetAdapter, &adapter->CurrentAddress);
+        DbgPrint("MTK: SetLinkLayerAddress OK\n");
     }
 
     MtkAdapterSetDatapathCapabilities(adapter);
+    DbgPrint("MTK: SetDatapathCapabilities OK\n");
+
+    // WiFi adapters need wake capabilities declared (even if empty).
+    WIFI_ADAPTER_WAKE_CAPABILITIES wakeCaps;
+    WIFI_ADAPTER_WAKE_CAPABILITIES_INIT(&wakeCaps);
+    WifiAdapterSetWakeCapabilities(adapter->NetAdapter, &wakeCaps);
+    DbgPrint("MTK: WifiAdapterSetWakeCapabilities OK\n");
 
     GOTO_IF_NOT_NT_SUCCESS(
         Exit, status,
         NetAdapterStart(adapter->NetAdapter));
+    DbgPrint("MTK: NetAdapterStart OK\n");
 
 Exit:
     TraceExitResult(status);

@@ -8,6 +8,7 @@ typedef struct _MTK_DEVICE
     // Phase 3: WDI session state
     BOOLEAN AdapterOpened;
     BOOLEAN RadioOn;
+    ULONG  OsWdiVersion;     // negotiated WDI version reported by the OS
     WDFWORKITEM ScanCompleteWorkItem;
     UINT32 ActiveScanTransactionId;
     UINT16 ActiveScanPortId;

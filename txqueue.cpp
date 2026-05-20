@@ -45,6 +45,16 @@ EvtAdapterCreateTxQueue(
     MTK_TXQUEUE* tx = MtkGetTxQueueContext(txQueue);
     tx->QueueId = queueId;
 
+    // Allocate a non-functional buffer pool. The TX ring is unused
+    // (we never produce packets), but having a real allocation may
+    // satisfy NDIS / nativewifip queries about datapath presence.
+    tx->FakeTxRingSize = MTK_MIN_TCB * MTK_MAX_PHYS_BUF_COUNT * sizeof(PVOID);
+    tx->FakeTxRing = ExAllocatePool2(POOL_FLAG_NON_PAGED, tx->FakeTxRingSize, 'qxtW');
+    if (tx->FakeTxRing == NULL) {
+        status = STATUS_INSUFFICIENT_RESOURCES;
+        goto Exit;
+    }
+
     NET_EXTENSION_QUERY extension;
     NET_EXTENSION_QUERY_INIT(
         &extension,
@@ -125,9 +135,11 @@ EvtTxQueueDestroy(
 {
     MTK_TXQUEUE* tx = MtkGetTxQueueContext(txQueue);
 
-    if (tx->TxdArray)
-        WdfObjectDelete(tx->TxdArray);
-    tx->TxdArray = NULL;
+    if (tx->FakeTxRing) {
+        ExFreePool(tx->FakeTxRing);
+        tx->FakeTxRing = NULL;
+        tx->FakeTxRingSize = 0;
+    }
 }
 
 _Use_decl_annotations_

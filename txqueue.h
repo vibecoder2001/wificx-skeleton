@@ -5,8 +5,11 @@ typedef struct _MTK_TXQUEUE {
 
 	NET_RING_COLLECTION const* Rings;
 
-	// descriptor information
-	WDFCOMMONBUFFER TxdArray;
+	// Non-functional placeholder buffer so the queue context isn't
+	// completely empty. Test of whether NDIS / nativewifip require
+	// some buffer presence to consider the datapath valid.
+	PVOID FakeTxRing;
+	SIZE_T FakeTxRingSize;
 
 	NET_EXTENSION ChecksumExtension;
 	NET_EXTENSION GsoExtension;

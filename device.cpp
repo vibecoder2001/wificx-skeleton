@@ -3,6 +3,9 @@
 #include "trace.h"
 #include "device.h"
 #include "adapter.h"
+#include "wdihandlers.h"
+
+EVT_WDF_WORKITEM EvtScanCompleteWorkItem;
 
 NTSTATUS
 MtkInitializeHardware(
@@ -34,14 +37,15 @@ MtkInitializeHardware(
     deviceCapabilities.MBOSupported = 0;
     deviceCapabilities.BeaconReportsImplemented = 0;
 
-    GOTO_IF_NOT_NT_SUCCESS(Exit, status, 
+    GOTO_IF_NOT_NT_SUCCESS(Exit, status,
         WifiDeviceSetDeviceCapabilities(pDevice->FxDevice, &deviceCapabilities));
+    DbgPrint("MTK: WifiDeviceSetDeviceCapabilities OK\n");
 
-    DOT11_AUTH_CIPHER_PAIR cipherPairs;
+    static DOT11_AUTH_CIPHER_PAIR cipherPairs;
     cipherPairs.AuthAlgoId = DOT11_AUTH_ALGO_80211_OPEN;
     cipherPairs.CipherAlgoId = DOT11_CIPHER_ALGO_NONE;
 
-    WIFI_STATION_CAPABILITIES stationCapabilities = { 0 };
+    WIFI_STATION_CAPABILITIES stationCapabilities = {};
     stationCapabilities.Size = sizeof(stationCapabilities);
     stationCapabilities.ScanSSIDListSize = 32;
     stationCapabilities.DesiredSSIDListSize = 32;
@@ -56,31 +60,28 @@ MtkInitializeHardware(
     stationCapabilities.MulticastDataAlgorithmsList = &cipherPairs;
     stationCapabilities.NumSupportedMulticastMgmtAlgorithms = 1;
     stationCapabilities.MulticastMgmtAlgorithmsList = &cipherPairs;
-    GOTO_IF_NOT_NT_SUCCESS(Exit, status, 
+    GOTO_IF_NOT_NT_SUCCESS(Exit, status,
         WifiDeviceSetStationCapabilities(pDevice->FxDevice, &stationCapabilities));
+    DbgPrint("MTK: WifiDeviceSetStationCapabilities OK\n");
 
-    static const WDI_CHANNEL_INFO ch2g[11] = {
-        { 1,  2412, 0, 0, 20, 0 }, { 2,  2417, 0, 0, 20, 0 },
-        { 3,  2422, 0, 0, 20, 0 }, { 4,  2427, 0, 0, 20, 0 },
-        { 5,  2432, 0, 0, 20, 0 }, { 6,  2437, 0, 0, 20, 0 },
-        { 7,  2442, 0, 0, 20, 0 }, { 8,  2447, 0, 0, 20, 0 },
-        { 9,  2452, 0, 0, 20, 0 }, { 10, 2457, 0, 0, 20, 0 },
-        { 11, 2462, 0, 0, 20, 0 },
+    static WDI_CHANNEL_MAPPING_ENTRY ch2g[11] = {
+        { 1, 2412 }, { 2, 2417 }, { 3, 2422 }, { 4, 2427 },
+        { 5, 2432 }, { 6, 2437 }, { 7, 2442 }, { 8, 2447 },
+        { 9, 2452 }, { 10, 2457 }, { 11, 2462 },
     };
-    static const WDI_CHANNEL_INFO ch5g[4] = {
-        { 36, 5180, 0, 0, 20, 0 }, { 40, 5200, 0, 0, 20, 0 },
-        { 44, 5220, 0, 0, 20, 0 }, { 48, 5240, 0, 0, 20, 0 },
+    static WDI_CHANNEL_MAPPING_ENTRY ch5g[4] = {
+        { 36, 5180 }, { 40, 5200 }, { 44, 5220 }, { 48, 5240 },
     };
-    static const UINT8 widths[1] = { 20 };
-    static const DOT11_PHY_TYPE phyTypes[1] = { dot11_phy_type_ht };
+    static UINT32 widths[1] = { 20 };
+    static WDI_PHY_TYPE phyTypes[1] = { WDI_PHY_TYPE_HT };
 
-    WIFI_BAND_INFO bandInfo[2] = { 0 };
+    WIFI_BAND_INFO bandInfo[2] = {};
     bandInfo[0].BandID = WDI_BAND_ID_2400;
     bandInfo[0].BandState = TRUE;
     bandInfo[0].NumValidPhyTypes = ARRAYSIZE(phyTypes);
     bandInfo[0].ValidPhyTypeList = phyTypes;
     bandInfo[0].NumValidChannelTypes = ARRAYSIZE(ch2g);
-    bandInfo[0].ValidChannelTypeList = ch2g;
+    bandInfo[0].ValidChannelTypes = ch2g;
     bandInfo[0].NumChannelWidths = ARRAYSIZE(widths);
     bandInfo[0].ChannelWidthList = widths;
 
@@ -89,7 +90,7 @@ MtkInitializeHardware(
     bandInfo[1].NumValidPhyTypes = ARRAYSIZE(phyTypes);
     bandInfo[1].ValidPhyTypeList = phyTypes;
     bandInfo[1].NumValidChannelTypes = ARRAYSIZE(ch5g);
-    bandInfo[1].ValidChannelTypeList = ch5g;
+    bandInfo[1].ValidChannelTypes = ch5g;
     bandInfo[1].NumChannelWidths = ARRAYSIZE(widths);
     bandInfo[1].ChannelWidthList = widths;
 
@@ -99,12 +100,11 @@ MtkInitializeHardware(
     bandCapabilities.BandInfoList = bandInfo;
     GOTO_IF_NOT_NT_SUCCESS(Exit, status,
         WifiDeviceSetBandCapabilities(pDevice->FxDevice, &bandCapabilities));
+    DbgPrint("MTK: WifiDeviceSetBandCapabilities OK\n");
 
-    static WIFI_PHY_INFO phyInfo[1] = { 0 };
-    phyInfo[0].PhyType = dot11_phy_type_ht;
-    phyInfo[0].BandID = WDI_BAND_ID_2400;
-    phyInfo[0].ShortPreambleOptionImplemented = TRUE;
-    phyInfo[0].ShortSlotTimeOptionImplemented = TRUE;
+    static WIFI_PHY_INFO phyInfo[1] = {};
+    phyInfo[0].PhyType = WDI_PHY_TYPE_HT;
+    phyInfo[0].NumberDataRateEntries = 0;
 
     WIFI_PHY_CAPABILITIES phyCapabilities = { 0 };
     phyCapabilities.Size = sizeof(phyCapabilities);
@@ -112,11 +112,24 @@ MtkInitializeHardware(
     phyCapabilities.PhyInfoList = phyInfo;
     GOTO_IF_NOT_NT_SUCCESS(Exit, status,
         WifiDeviceSetPhyCapabilities(pDevice->FxDevice, &phyCapabilities));
+    DbgPrint("MTK: WifiDeviceSetPhyCapabilities OK\n");
 
     WIFI_WIFIDIRECT_CAPABILITIES wifiDirectCapabilities = { 0 };
     wifiDirectCapabilities.Size = sizeof(wifiDirectCapabilities);
     GOTO_IF_NOT_NT_SUCCESS(Exit, status,
         WifiDeviceSetWiFiDirectCapabilities(pDevice->FxDevice, &wifiDirectCapabilities));
+    DbgPrint("MTK: WifiDeviceSetWiFiDirectCapabilities OK\n");
+
+    WDF_WORKITEM_CONFIG wiConfig;
+    WDF_WORKITEM_CONFIG_INIT(&wiConfig, EvtScanCompleteWorkItem);
+    WDF_OBJECT_ATTRIBUTES wiAttr;
+    WDF_OBJECT_ATTRIBUTES_INIT(&wiAttr);
+    wiAttr.ParentObject = pDevice->FxDevice;
+    GOTO_IF_NOT_NT_SUCCESS(Exit, status,
+        WdfWorkItemCreate(&wiConfig, &wiAttr, &pDevice->ScanCompleteWorkItem));
+
+    pDevice->OsWdiVersion = WifiDeviceGetOsWdiVersion(pDevice->FxDevice);
+    DbgPrint("MTK: OS WDI version = 0x%x\n", pDevice->OsWdiVersion);
 
 Exit:
     TraceExitResult(status);
@@ -156,4 +169,39 @@ EvtDeviceReleaseHardware(
     NTSTATUS status = STATUS_SUCCESS;
     TraceExitResult(status);
     return status;
+}
+
+_Use_decl_annotations_
+void
+EvtScanCompleteWorkItem(
+    _In_ WDFWORKITEM WorkItem
+)
+{
+    WDFDEVICE wdfDevice = (WDFDEVICE)WdfWorkItemGetParentObject(WorkItem);
+    MTK_DEVICE* dev = MtkGetDeviceContext(wdfDevice);
+
+    // First: announce the fabricated BSS list via TLV-encoded indication.
+    WdiEmitBssEntryList(wdfDevice);
+
+    // Then: tell the OS the scan task is complete (header-only payload).
+    WDFMEMORY memory = NULL;
+    PWDI_MESSAGE_HEADER hdr = NULL;
+    NTSTATUS status = WdfMemoryCreate(
+        WDF_NO_OBJECT_ATTRIBUTES,
+        NonPagedPoolNx,
+        'IFiW',
+        sizeof(WDI_MESSAGE_HEADER),
+        &memory,
+        (PVOID*)&hdr);
+    if (!NT_SUCCESS(status)) {
+        return;
+    }
+
+    RtlZeroMemory(hdr, sizeof(*hdr));
+    hdr->PortId = dev->ActiveScanPortId;
+    hdr->TransactionId = dev->ActiveScanTransactionId;
+    hdr->Status = STATUS_SUCCESS;
+
+    WifiDeviceReceiveIndication(wdfDevice, WDI_INDICATION_SCAN_COMPLETE, memory);
+    WdfObjectDelete(memory);
 }

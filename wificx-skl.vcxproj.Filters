@@ -53,6 +53,9 @@
     <ClCompile Include="txqueue.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="wdihandlers.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="wifidevice.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -86,6 +89,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="txqueue.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="wdihandlers.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="wifidevice.h">

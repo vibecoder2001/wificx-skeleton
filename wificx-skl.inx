@@ -23,19 +23,26 @@ PnpLockdown = 1
 %StdMfg% = Standard,NT$ARCH$.10.0...22000
 
 [Standard.NT$ARCH$.10.0...22000]
-%WiFiCX_SKL.DeviceDesc% = WiFiCX_SKL.ndi, Root\WIFICX_SKL
+; Root-enumerated software install (Hyper-V / no real hardware)
+%WiFiCX_SKL.DeviceDesc% = WiFiCX_SKL_Root.ndi, Root\WIFICX_SKL
+; Test target: Realtek RTL8852BE (real PCI WiFi silicon). Lets us prove
+; that wlansvc's "no engagement" issue is specifically root-enumerated
+; vs bus-attached, by installing the fake driver against real hardware.
+; Don't install this variant on a machine where you want WiFi to work.
+%WiFiCX_SKL.DeviceDesc% = WiFiCX_SKL_PCI.ndi,  PCI\VEN_10EC&DEV_B852
 
-[WiFiCX_SKL.ndi.NT]
+; ---------- Root-enumerated install (software device) ----------
+[WiFiCX_SKL_Root.ndi.NT]
 FeatureScore   = 0xFE
 CopyFiles      = WiFiCX_SKL.CopyFiles
 Characteristics = 0x84   ; NCF_HAS_UI | NCF_PHYSICAL
-BusType        = 15      ; PNPBus (root-enumerated)
+BusType        = 15      ; PNPBus
 
 *IfType                  = 71  ; IF_TYPE_IEEE80211
 *MediaType               = 16  ; NdisMediumNative802_11
 *PhysicalMediaType       = 9   ; NdisPhysicalMediumNative802_11
-NumberOfNetworkInterfaces = 5  ; primary STA + WFD device + WFD roles
-*IfConnectorPresent      = 0   ; no physical connector (software device)
+NumberOfNetworkInterfaces = 5
+*IfConnectorPresent      = 0   ; no physical connector
 *ConnectionType          = 1   ; NET_IF_CONNECTION_DEDICATED
 *DirectionType           = 0   ; NET_IF_DIRECTION_SENDRECEIVE
 *AccessType              = 2   ; NET_IF_ACCESS_BROADCAST
@@ -43,19 +50,44 @@ NumberOfNetworkInterfaces = 5  ; primary STA + WFD device + WFD roles
 
 AddReg = ndi.reg
 
-[ndi.reg]
-HKR, Ndi\Interfaces, UpperRange, 0, "ndis5"
-HKR, Ndi\Interfaces, LowerRange, 0, "ethernet,wlan"
-HKR, Ndi,            Service,    0, %ServiceName%
-
-[WiFiCX_SKL.ndi.NT.Wdf]
+[WiFiCX_SKL_Root.ndi.NT.Wdf]
 KmdfService = %ServiceName%, wdf
+
+[WiFiCX_SKL_Root.ndi.NT.Services]
+AddService = %ServiceName%, 2, WiFiCX_SKL.Service, Service.EventLog
+
+; ---------- PCI-attached install (Realtek RTL8852BE) ----------
+[WiFiCX_SKL_PCI.ndi.NT]
+FeatureScore   = 0xFE
+CopyFiles      = WiFiCX_SKL.CopyFiles
+Characteristics = 0x84   ; NCF_HAS_UI | NCF_PHYSICAL
+BusType        = 5       ; PCIBus
+
+*IfType                  = 71  ; IF_TYPE_IEEE80211
+*MediaType               = 16  ; NdisMediumNative802_11
+*PhysicalMediaType       = 9   ; NdisPhysicalMediumNative802_11
+NumberOfNetworkInterfaces = 5
+*IfConnectorPresent      = 1   ; physical connector
+*ConnectionType          = 1
+*DirectionType           = 0
+*AccessType              = 2
+*HardwareLoopback        = 0
+
+AddReg = ndi.reg
+
+[WiFiCX_SKL_PCI.ndi.NT.Wdf]
+KmdfService = %ServiceName%, wdf
+
+[WiFiCX_SKL_PCI.ndi.NT.Services]
+AddService = %ServiceName%, 2, WiFiCX_SKL.Service, Service.EventLog
+
+[ndi.reg]
+HKR, Ndi\Interfaces, UpperRange, 0, "ndis5,mdcwifi,wifipro"
+HKR, Ndi\Interfaces, LowerRange, 0, "wlan,ethernet,vwifi"
+HKR, Ndi,            Service,    0, %ServiceName%
 
 [wdf]
 KmdfLibraryVersion = $KMDFVERSION$
-
-[WiFiCX_SKL.ndi.NT.Services]
-AddService = %ServiceName%, 2, WiFiCX_SKL.Service, Service.EventLog
 
 [WiFiCX_SKL.Service]
 DisplayName    = %Service.DisplayName%

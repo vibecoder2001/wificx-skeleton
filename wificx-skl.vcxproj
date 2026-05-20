@@ -37,11 +37,11 @@
     <ConfigurationType>Driver</ConfigurationType>
     <NetAdapterDriver>true</NetAdapterDriver>
     <NETADAPTER_VERSION_MAJOR>2</NETADAPTER_VERSION_MAJOR>
-    <NETADAPTER_VERSION_MINOR>3</NETADAPTER_VERSION_MINOR>
-    <KMDF_VERSION_MINOR>23</KMDF_VERSION_MINOR>
+    <NETADAPTER_VERSION_MINOR>5</NETADAPTER_VERSION_MINOR>
+    <KMDF_VERSION_MINOR>33</KMDF_VERSION_MINOR>
     <WifiDriver>true</WifiDriver>
     <WIFI_VERSION_MAJOR>1</WIFI_VERSION_MAJOR>
-    <WIFI_VERSION_MINOR>0</WIFI_VERSION_MINOR>
+    <WIFI_VERSION_MINOR>2</WIFI_VERSION_MINOR>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <TargetVersion>Windows10</TargetVersion>
@@ -52,11 +52,11 @@
     <ConfigurationType>Driver</ConfigurationType>
     <NetAdapterDriver>true</NetAdapterDriver>
     <NETADAPTER_VERSION_MAJOR>2</NETADAPTER_VERSION_MAJOR>
-    <NETADAPTER_VERSION_MINOR>3</NETADAPTER_VERSION_MINOR>
-    <KMDF_VERSION_MINOR>23</KMDF_VERSION_MINOR>
+    <NETADAPTER_VERSION_MINOR>5</NETADAPTER_VERSION_MINOR>
+    <KMDF_VERSION_MINOR>33</KMDF_VERSION_MINOR>
     <WifiDriver>true</WifiDriver>
     <WIFI_VERSION_MAJOR>1</WIFI_VERSION_MAJOR>
-    <WIFI_VERSION_MINOR>0</WIFI_VERSION_MINOR>
+    <WIFI_VERSION_MINOR>2</WIFI_VERSION_MINOR>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'" Label="Configuration">
     <TargetVersion>Windows10</TargetVersion>
@@ -67,11 +67,11 @@
     <ConfigurationType>Driver</ConfigurationType>
     <NetAdapterDriver>true</NetAdapterDriver>
     <NETADAPTER_VERSION_MAJOR>2</NETADAPTER_VERSION_MAJOR>
-    <NETADAPTER_VERSION_MINOR>3</NETADAPTER_VERSION_MINOR>
-    <KMDF_VERSION_MINOR>23</KMDF_VERSION_MINOR>
+    <NETADAPTER_VERSION_MINOR>5</NETADAPTER_VERSION_MINOR>
+    <KMDF_VERSION_MINOR>33</KMDF_VERSION_MINOR>
     <WifiDriver>true</WifiDriver>
     <WIFI_VERSION_MAJOR>1</WIFI_VERSION_MAJOR>
-    <WIFI_VERSION_MINOR>0</WIFI_VERSION_MINOR>
+    <WIFI_VERSION_MINOR>2</WIFI_VERSION_MINOR>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <TargetVersion>Windows10</TargetVersion>
@@ -82,11 +82,11 @@
     <ConfigurationType>Driver</ConfigurationType>
     <NetAdapterDriver>true</NetAdapterDriver>
     <NETADAPTER_VERSION_MAJOR>2</NETADAPTER_VERSION_MAJOR>
-    <NETADAPTER_VERSION_MINOR>3</NETADAPTER_VERSION_MINOR>
-    <KMDF_VERSION_MINOR>23</KMDF_VERSION_MINOR>
+    <NETADAPTER_VERSION_MINOR>5</NETADAPTER_VERSION_MINOR>
+    <KMDF_VERSION_MINOR>33</KMDF_VERSION_MINOR>
     <WifiDriver>true</WifiDriver>
     <WIFI_VERSION_MAJOR>1</WIFI_VERSION_MAJOR>
-    <WIFI_VERSION_MINOR>0</WIFI_VERSION_MINOR>
+    <WIFI_VERSION_MINOR>2</WIFI_VERSION_MINOR>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <PropertyGroup>
@@ -127,15 +127,15 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
     <Link>
-      <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ksguid.lib;$(DDK_LIB_PATH)\ntstrsafe.lib;$(DDK_LIB_PATH)\msgpioclxstub.lib</AdditionalDependencies>
+      <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ksguid.lib;$(DDK_LIB_PATH)\ntstrsafe.lib;$(DDK_LIB_PATH)\msgpioclxstub.lib;$(DDK_LIB_PATH)\wlan\2.0\WificxTLVGenParse.lib</AdditionalDependencies>
     </Link>
     <ClCompile>
       <TreatWarningAsError>false</TreatWarningAsError>
       <WarningLevel>Level4</WarningLevel>
       <ExceptionHandling>
       </ExceptionHandling>
-      <PrecompiledHeader>Create</PrecompiledHeader>
-      <PrecompiledHeaderFile>precomp.h</PrecompiledHeaderFile>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PreprocessorDefinitions>WIFI_VERSION_MAJOR=$(WIFI_VERSION_MAJOR);WIFI_VERSION_MINOR=$(WIFI_VERSION_MINOR);%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <DriverSign>
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
@@ -143,15 +143,15 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Link>
-      <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ksguid.lib;$(DDK_LIB_PATH)\ntstrsafe.lib;$(DDK_LIB_PATH)\msgpioclxstub.lib</AdditionalDependencies>
+      <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ksguid.lib;$(DDK_LIB_PATH)\ntstrsafe.lib;$(DDK_LIB_PATH)\msgpioclxstub.lib;$(DDK_LIB_PATH)\wlan\2.0\WificxTLVGenParse.lib</AdditionalDependencies>
     </Link>
     <ClCompile>
       <TreatWarningAsError>false</TreatWarningAsError>
       <WarningLevel>Level4</WarningLevel>
       <ExceptionHandling>
       </ExceptionHandling>
-      <PrecompiledHeader>Create</PrecompiledHeader>
-      <PrecompiledHeaderFile>precomp.h</PrecompiledHeaderFile>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PreprocessorDefinitions>WIFI_VERSION_MAJOR=$(WIFI_VERSION_MAJOR);WIFI_VERSION_MINOR=$(WIFI_VERSION_MINOR);%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <DriverSign>
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
@@ -159,15 +159,15 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
     <Link>
-      <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ksguid.lib;$(DDK_LIB_PATH)\ntstrsafe.lib;$(DDK_LIB_PATH)\msgpioclxstub.lib</AdditionalDependencies>
+      <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ksguid.lib;$(DDK_LIB_PATH)\ntstrsafe.lib;$(DDK_LIB_PATH)\msgpioclxstub.lib;$(DDK_LIB_PATH)\wlan\2.0\WificxTLVGenParse.lib</AdditionalDependencies>
     </Link>
     <ClCompile>
       <TreatWarningAsError>false</TreatWarningAsError>
       <WarningLevel>Level4</WarningLevel>
       <ExceptionHandling>
       </ExceptionHandling>
-      <PrecompiledHeader>Create</PrecompiledHeader>
-      <PrecompiledHeaderFile>precomp.h</PrecompiledHeaderFile>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PreprocessorDefinitions>WIFI_VERSION_MAJOR=$(WIFI_VERSION_MAJOR);WIFI_VERSION_MINOR=$(WIFI_VERSION_MINOR);%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <DriverSign>
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
@@ -175,15 +175,15 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Link>
-      <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ksguid.lib;$(DDK_LIB_PATH)\ntstrsafe.lib;$(DDK_LIB_PATH)\msgpioclxstub.lib</AdditionalDependencies>
+      <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ksguid.lib;$(DDK_LIB_PATH)\ntstrsafe.lib;$(DDK_LIB_PATH)\msgpioclxstub.lib;$(DDK_LIB_PATH)\wlan\2.0\WificxTLVGenParse.lib</AdditionalDependencies>
     </Link>
     <ClCompile>
       <TreatWarningAsError>false</TreatWarningAsError>
       <WarningLevel>Level4</WarningLevel>
       <ExceptionHandling>
       </ExceptionHandling>
-      <PrecompiledHeader>Create</PrecompiledHeader>
-      <PrecompiledHeaderFile>precomp.h</PrecompiledHeaderFile>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PreprocessorDefinitions>WIFI_VERSION_MAJOR=$(WIFI_VERSION_MAJOR);WIFI_VERSION_MINOR=$(WIFI_VERSION_MINOR);%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <DriverSign>
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
@@ -212,6 +212,7 @@
     <ClInclude Include="rxqueue.h" />
     <ClInclude Include="trace.h" />
     <ClInclude Include="txqueue.h" />
+    <ClInclude Include="wdihandlers.h" />
     <ClInclude Include="wifidevice.h" />
   </ItemGroup>
   <ItemGroup>
@@ -222,6 +223,7 @@
     <ClCompile Include="power.cpp" />
     <ClCompile Include="rxqueue.cpp" />
     <ClCompile Include="txqueue.cpp" />
+    <ClCompile Include="wdihandlers.cpp" />
     <ClCompile Include="wifidevice.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

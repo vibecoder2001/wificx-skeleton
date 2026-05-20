@@ -4,16 +4,16 @@
 static FAKE_BSS_ENTRY g_FakeBss[FAKE_BSS_COUNT] = {
     { { 0x02, 0xAA, 0xBB, 0x00, 0x00, 0x01 },
       8, { 'F','a','k','e','O','p','e','n' },
-      2437, -45, 100, 0x0001, FALSE, { 0 }, 0 },
+      2437, -45, 100, 0x0001, FALSE, { 0 }, 0, { 0 }, 0 },
     { { 0x02, 0xAA, 0xBB, 0x00, 0x00, 0x02 },
       8, { 'F','a','k','e','W','P','A','2' },
-      2462, -60, 100, 0x0011, TRUE, { 0 }, 0 },
+      2462, -60, 100, 0x0011, TRUE, { 0 }, 0, { 0 }, 0 },
     { { 0x02, 0xAA, 0xBB, 0x00, 0x00, 0x03 },
       9, { 'F','a','k','e','G','u','e','s','t' },
-      5180, -55, 100, 0x0001, FALSE, { 0 }, 0 },
+      5180, -55, 100, 0x0001, FALSE, { 0 }, 0, { 0 }, 0 },
     { { 0x02, 0xAA, 0xBB, 0x00, 0x00, 0x04 },
       8, { 'F','a','k','e','H','o','m','e' },
-      5220, -70, 100, 0x0011, TRUE, { 0 }, 0 },
+      5220, -70, 100, 0x0011, TRUE, { 0 }, 0, { 0 }, 0 },
 };
 static BOOLEAN g_IesBuilt = FALSE;
 
@@ -70,12 +70,28 @@ FakeBssBuildIes(FAKE_BSS_ENTRY* e)
     e->IeLength = off;
 }
 
+static void
+FakeBssBuildBeaconBody(FAKE_BSS_ENTRY* e)
+{
+    // 802.11 beacon frame body: 8B Timestamp + 2B BeaconInterval + 2B
+    // CapabilityInfo, then the variable IE section.
+    UCHAR* p = e->BeaconBuffer;
+    RtlZeroMemory(p, 8);                                  // Timestamp = 0
+    p[8]  = (UCHAR)(e->BeaconIntervalTU & 0xff);
+    p[9]  = (UCHAR)((e->BeaconIntervalTU >> 8) & 0xff);
+    p[10] = (UCHAR)(e->CapabilityInfo & 0xff);
+    p[11] = (UCHAR)((e->CapabilityInfo >> 8) & 0xff);
+    RtlCopyMemory(p + FAKE_BSS_BEACON_FIXED_LEN, e->IeBuffer, e->IeLength);
+    e->BeaconLength = FAKE_BSS_BEACON_FIXED_LEN + e->IeLength;
+}
+
 const FAKE_BSS_ENTRY*
 FakeBssGetTable(_Out_ SIZE_T* count)
 {
     if (!g_IesBuilt) {
         for (SIZE_T i = 0; i < FAKE_BSS_COUNT; ++i) {
             FakeBssBuildIes(&g_FakeBss[i]);
+            FakeBssBuildBeaconBody(&g_FakeBss[i]);
         }
         g_IesBuilt = TRUE;
     }

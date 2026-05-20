@@ -5,7 +5,9 @@ typedef struct _MTK_RXQUEUE {
 
 	NET_RING_COLLECTION const* Rings;
 
-	WDFCOMMONBUFFER RxdArray;
+	// Non-functional placeholder buffer (see MTK_TXQUEUE comment).
+	PVOID FakeRxRing;
+	SIZE_T FakeRxRingSize;
 
 	NET_EXTENSION ChecksumExtension;
 	NET_EXTENSION VirtualAddressExtension;

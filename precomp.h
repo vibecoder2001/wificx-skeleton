@@ -37,5 +37,5 @@
 #define MTK_MAX_PACKET_SIZE (1514)
 #define MTK_MAX_FRAME_SIZE  (MTK_MAX_PACKET_SIZE + VLAN_HEADER_SIZE + FRAME_CRC_SIZE)
 
-// maximum link speed for send and recv in bps
-#define MTK_MEDIA_MAX_SPEED 2'500'000'000
+// maximum link speed for send and recv in bps (802.11n HT20 ~ 144 Mbps; round up)
+#define MTK_MEDIA_MAX_SPEED 150'000'000ULL
