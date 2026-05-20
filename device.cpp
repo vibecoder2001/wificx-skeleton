@@ -1,4 +1,5 @@
 #include "precomp.h"
+#include <wlan/2.0/TlvGeneratorParser.hpp>
 
 #include "trace.h"
 #include "device.h"
@@ -6,6 +7,8 @@
 #include "wdihandlers.h"
 
 EVT_WDF_WORKITEM EvtScanCompleteWorkItem;
+EVT_WDF_WORKITEM EvtResetCompleteWorkItem;
+EVT_WDF_WORKITEM EvtRadioStatusWorkItem;
 
 NTSTATUS
 MtkInitializeHardware(
@@ -36,6 +39,7 @@ MtkInitializeHardware(
     deviceCapabilities.SAEAuthenticationSupported = 0;
     deviceCapabilities.MBOSupported = 0;
     deviceCapabilities.BeaconReportsImplemented = 0;
+    deviceCapabilities.NumRadios = 1;
 
     GOTO_IF_NOT_NT_SUCCESS(Exit, status,
         WifiDeviceSetDeviceCapabilities(pDevice->FxDevice, &deviceCapabilities));
@@ -102,9 +106,17 @@ MtkInitializeHardware(
         WifiDeviceSetBandCapabilities(pDevice->FxDevice, &bandCapabilities));
     DbgPrint("MTK: WifiDeviceSetBandCapabilities OK\n");
 
+    // Common 802.11b/g rates in 500kbps units; nwifi!QueryRawData walks
+    // [DOT11_PHY_ATTRIBUTES+0x48] (NumDataRateMappingEntries) and rejects
+    // 0 (computes -1, fails the (count-1)<=0x7D check). Must be >= 1.
     static WIFI_PHY_INFO phyInfo[1] = {};
     phyInfo[0].PhyType = WDI_PHY_TYPE_HT;
-    phyInfo[0].NumberDataRateEntries = 0;
+    phyInfo[0].NumberDataRateEntries = 12;
+    static const UINT16 rateValues[12] = { 2, 4, 11, 22, 12, 18, 24, 36, 48, 72, 96, 108 };
+    for (SIZE_T i = 0; i < 12; ++i) {
+        phyInfo[0].DataRateList[i].DataRateFlag = 0;
+        phyInfo[0].DataRateList[i].DataRateValue = rateValues[i];
+    }
 
     WIFI_PHY_CAPABILITIES phyCapabilities = { 0 };
     phyCapabilities.Size = sizeof(phyCapabilities);
@@ -114,8 +126,42 @@ MtkInitializeHardware(
         WifiDeviceSetPhyCapabilities(pDevice->FxDevice, &phyCapabilities));
     DbgPrint("MTK: WifiDeviceSetPhyCapabilities OK\n");
 
-    WIFI_WIFIDIRECT_CAPABILITIES wifiDirectCapabilities = { 0 };
-    wifiDirectCapabilities.Size = sizeof(wifiDirectCapabilities);
+    // vwififlt!FilterAttach REQUIRES the NDIS_MINIPORT_ADAPTER_NATIVE_802_11_
+    // ATTRIBUTES struct to have:
+    //   - OpModeCapability & 0x20 (WFD_GROUP_OWNER) set
+    //   - VWiFiAttributes non-NULL
+    //   - ExtAPAttributes non-NULL
+    // WiFiCx auto-derives all of these from WifiDeviceSetWiFiDirectCapabilities.
+    // ExtAPAttributes specifically is only allocated when ConcurrentGOCount > 0
+    // (which flips OpMode bit 0x20). VWiFi is allocated regardless.
+    //
+    // Also need fields populated enough for nwifi!WFDValidateInitAttributes
+    // to pass (mirrors the station-caps shape).
+    WIFI_WIFIDIRECT_CAPABILITIES wifiDirectCapabilities;
+    WIFI_WIFIDIRECT_CAPABILITIES_INIT(&wifiDirectCapabilities);
+    wifiDirectCapabilities.WFDRoleCount = 1;
+    wifiDirectCapabilities.ConcurrentGOCount = 1;        // flips bit 0x20 → ExtAP alloc
+    wifiDirectCapabilities.ConcurrentClientCount = 1;
+    wifiDirectCapabilities.ScanSSIDListSize = 32;
+    wifiDirectCapabilities.DesiredSSIDListSize = 32;
+    wifiDirectCapabilities.PrivacyExemptionListSize = 16;
+    wifiDirectCapabilities.AssociationTableSize = 16;
+    wifiDirectCapabilities.DefaultKeyTableSize = 16;
+    wifiDirectCapabilities.WEPKeyValueMaxLength = 16;
+    wifiDirectCapabilities.NumSupportedUnicastAlgorithms = 1;
+    wifiDirectCapabilities.UnicastAlgorithms = &cipherPairs;
+    wifiDirectCapabilities.NumSupportedMulticastDataAlgorithms = 1;
+    wifiDirectCapabilities.MulticastDataAlgorithms = &cipherPairs;
+    wifiDirectCapabilities.GOClientTableSize = 8;
+    wifiDirectCapabilities.MaxVendorSpecificExtensionIESize = 256;
+    // CRITICAL for nwifi!WFDValidateInitAttributes: it requires the auto-
+    // allocated WFDAttributes struct to have [+0x20] != 0 and [+0x28] != 0.
+    // wificx writes those from NumInterfaceAddresses and InterfaceAddressList
+    // (WIFI_WIFIDIRECT_CAPABILITIES offset 0x68/0x70) — and ONLY from there.
+    // Provide at least one MAC so the validator passes.
+    static WDI_MAC_ADDRESS wfdAddrs[1] = {{{0x02, 0x57, 0x49, 0x46, 0x44, 0x01}}};
+    wifiDirectCapabilities.NumInterfaceAddresses = 1;
+    wifiDirectCapabilities.InterfaceAddressList = wfdAddrs;
     GOTO_IF_NOT_NT_SUCCESS(Exit, status,
         WifiDeviceSetWiFiDirectCapabilities(pDevice->FxDevice, &wifiDirectCapabilities));
     DbgPrint("MTK: WifiDeviceSetWiFiDirectCapabilities OK\n");
@@ -127,6 +173,22 @@ MtkInitializeHardware(
     wiAttr.ParentObject = pDevice->FxDevice;
     GOTO_IF_NOT_NT_SUCCESS(Exit, status,
         WdfWorkItemCreate(&wiConfig, &wiAttr, &pDevice->ScanCompleteWorkItem));
+
+    WDF_WORKITEM_CONFIG_INIT(&wiConfig, EvtResetCompleteWorkItem);
+    WDF_OBJECT_ATTRIBUTES_INIT(&wiAttr);
+    wiAttr.ParentObject = pDevice->FxDevice;
+    GOTO_IF_NOT_NT_SUCCESS(Exit, status,
+        WdfWorkItemCreate(&wiConfig, &wiAttr, &pDevice->ResetCompleteWorkItem));
+
+    WDF_WORKITEM_CONFIG_INIT(&wiConfig, EvtRadioStatusWorkItem);
+    WDF_OBJECT_ATTRIBUTES_INIT(&wiAttr);
+    wiAttr.ParentObject = pDevice->FxDevice;
+    GOTO_IF_NOT_NT_SUCCESS(Exit, status,
+        WdfWorkItemCreate(&wiConfig, &wiAttr, &pDevice->RadioStatusWorkItem));
+
+    // Radio defaults to ON so the initial SET_RADIO_STATE(TRUE) during
+    // adapter bringup is a no-op transition and skips the indication.
+    pDevice->RadioOn = TRUE;
 
     pDevice->OsWdiVersion = WifiDeviceGetOsWdiVersion(pDevice->FxDevice);
     DbgPrint("MTK: OS WDI version = 0x%x\n", pDevice->OsWdiVersion);
@@ -180,28 +242,165 @@ EvtScanCompleteWorkItem(
     WDFDEVICE wdfDevice = (WDFDEVICE)WdfWorkItemGetParentObject(WorkItem);
     MTK_DEVICE* dev = MtkGetDeviceContext(wdfDevice);
 
-    // First: announce the fabricated BSS list via TLV-encoded indication.
-    WdiEmitBssEntryList(wdfDevice);
+    // Drain queue — one BSS list + SCAN_COMPLETE per queued scan.
+    // The SCAN WIFIREQUEST is completed AFTER both indications so that
+    // wlansvc sees the BSS entries while the scan task is still pending,
+    // matching the Realtek WDI sample's wdiext_IndicateBSSEntry pattern.
+    while (dev->ScanQueueHead != dev->ScanQueueTail) {
+        UINT idx = dev->ScanQueueHead & 0xF;
+        UINT16 portId   = dev->ScanQueue[idx].PortId;
+        UINT32 txnId    = dev->ScanQueue[idx].TxnId;
+        WIFIREQUEST req = dev->ScanQueue[idx].Request;
+        TraceLoggingWrite(WiFiCxSampleTraceProvider, "ScanCompleteDraining",
+            TraceLoggingUInt16(portId, "PortId"),
+            TraceLoggingUInt32(txnId, "Txn"));
 
-    // Then: tell the OS the scan task is complete (header-only payload).
-    WDFMEMORY memory = NULL;
-    PWDI_MESSAGE_HEADER hdr = NULL;
-    NTSTATUS status = WdfMemoryCreate(
-        WDF_NO_OBJECT_ATTRIBUTES,
-        NonPagedPoolNx,
-        'IFiW',
-        sizeof(WDI_MESSAGE_HEADER),
-        &memory,
-        (PVOID*)&hdr);
-    if (!NT_SUCCESS(status)) {
-        return;
+        // Set the active fields so WdiEmitBssEntryList uses the right port/txn.
+        dev->ActiveScanPortId = portId;
+        dev->ActiveScanTransactionId = txnId;
+
+        // BSS_ENTRY_LIST first, then SCAN_COMPLETE — matches Realtek WDI
+        // sample order. The Task base handler routes BSS into the list
+        // manager while the Task is outstanding.
+        WdiEmitBssEntryList(wdfDevice);
+
+        WDFMEMORY memory = NULL;
+        PWDI_MESSAGE_HEADER hdr = NULL;
+        NTSTATUS status = WdfMemoryCreate(
+            WDF_NO_OBJECT_ATTRIBUTES,
+            NonPagedPoolNx,
+            'IFiW',
+            sizeof(WDI_MESSAGE_HEADER),
+            &memory,
+            (PVOID*)&hdr);
+        if (!NT_SUCCESS(status)) break;
+
+        RtlZeroMemory(hdr, sizeof(*hdr));
+        hdr->PortId = portId;
+        hdr->TransactionId = txnId;
+        hdr->Status = STATUS_SUCCESS;
+        WifiDeviceReceiveIndication(wdfDevice, WDI_INDICATION_SCAN_COMPLETE, memory);
+        WdfObjectDelete(memory);
+
+        if (req != NULL) {
+            WifiRequestComplete(req, STATUS_SUCCESS, sizeof(WDI_MESSAGE_HEADER));
+        }
+
+        InterlockedIncrement(&dev->ScanQueueHead);
     }
+}
 
-    RtlZeroMemory(hdr, sizeof(*hdr));
-    hdr->PortId = dev->ActiveScanPortId;
-    hdr->TransactionId = dev->ActiveScanTransactionId;
-    hdr->Status = STATUS_SUCCESS;
+_Use_decl_annotations_
+void
+EvtResetCompleteWorkItem(
+    _In_ WDFWORKITEM WorkItem
+)
+{
+    WDFDEVICE wdfDevice = (WDFDEVICE)WdfWorkItemGetParentObject(WorkItem);
+    MTK_DEVICE* dev = MtkGetDeviceContext(wdfDevice);
 
-    WifiDeviceReceiveIndication(wdfDevice, WDI_INDICATION_SCAN_COMPLETE, memory);
-    WdfObjectDelete(memory);
+    // Drain queue — fire one indication per queued reset.
+    while (dev->ResetQueueHead != dev->ResetQueueTail) {
+        UINT idx = dev->ResetQueueHead & 0xF;
+        UINT16 portId = dev->ResetQueue[idx].PortId;
+        UINT32 txnId  = dev->ResetQueue[idx].TxnId;
+        TraceLoggingWrite(WiFiCxSampleTraceProvider, "ResetCompleteFiring",
+            TraceLoggingUInt16(portId, "PortId"),
+            TraceLoggingUInt32(txnId, "Txn"));
+
+        WDFMEMORY memory = NULL;
+        PWDI_MESSAGE_HEADER hdr = NULL;
+        NTSTATUS status = WdfMemoryCreate(
+            WDF_NO_OBJECT_ATTRIBUTES,
+            NonPagedPoolNx,
+            'IFiW',
+            sizeof(WDI_MESSAGE_HEADER),
+            &memory,
+            (PVOID*)&hdr);
+        if (!NT_SUCCESS(status)) break;
+
+        RtlZeroMemory(hdr, sizeof(*hdr));
+        hdr->PortId = portId;
+        hdr->TransactionId = txnId;
+        hdr->Status = STATUS_SUCCESS;
+        WifiDeviceReceiveIndication(wdfDevice, WDI_INDICATION_DOT11_RESET_COMPLETE, memory);
+        WdfObjectDelete(memory);
+
+        InterlockedIncrement(&dev->ResetQueueHead);
+    }
+}
+
+_Use_decl_annotations_
+void
+EvtRadioStatusWorkItem(
+    _In_ WDFWORKITEM WorkItem
+)
+{
+    WDFDEVICE wdfDevice = (WDFDEVICE)WdfWorkItemGetParentObject(WorkItem);
+    MTK_DEVICE* dev = MtkGetDeviceContext(wdfDevice);
+
+    while (dev->RadioQueueHead != dev->RadioQueueTail) {
+        UINT idx = dev->RadioQueueHead & 0xF;
+        UINT16  portId = dev->RadioQueue[idx].PortId;
+        UINT32  txnId  = dev->RadioQueue[idx].TxnId;
+        BOOLEAN softOn = dev->RadioQueue[idx].SoftOn;
+        TraceLoggingWrite(WiFiCxSampleTraceProvider, "RadioCompleteFiring",
+            TraceLoggingUInt16(portId, "PortId"),
+            TraceLoggingUInt32(txnId, "Txn"),
+            TraceLoggingUInt8(softOn, "SoftOn"));
+
+        // 1) Fire WDI_INDICATION_SET_RADIO_STATE_COMPLETE (id 22, header-only)
+        //    with matching TxnId+PortId so Task::OnDeviceIndicationArrived
+        //    completes the outstanding SET_RADIO_STATE Task.
+        {
+            WDFMEMORY mem = NULL;
+            PWDI_MESSAGE_HEADER hdr = NULL;
+            NTSTATUS ms = WdfMemoryCreate(
+                WDF_NO_OBJECT_ATTRIBUTES, NonPagedPoolNx, 'IFiW',
+                sizeof(WDI_MESSAGE_HEADER), &mem, (PVOID*)&hdr);
+            if (NT_SUCCESS(ms)) {
+                RtlZeroMemory(hdr, sizeof(*hdr));
+                hdr->PortId = portId;
+                hdr->TransactionId = txnId;
+                hdr->Status = STATUS_SUCCESS;
+                WifiDeviceReceiveIndication(wdfDevice,
+                    WDI_INDICATION_SET_RADIO_STATE_COMPLETE, mem);
+                WdfObjectDelete(mem);
+            }
+        }
+
+        // 2) Fire WDI_INDICATION_RADIO_STATUS (id 67, TLV) UNSOLICITED so the
+        //    OS updates its state tracking. TxnId=0 keeps it from being
+        //    consumed as a Task completion (per the same lesson as BSS_ENTRY_LIST).
+        WDI_INDICATION_RADIO_STATUS_PARAMETERS params;
+        params.RadioState.HardwareState = TRUE;
+        params.RadioState.SoftwareState = softOn;
+
+        TLV_CONTEXT ctx = { 0, dev->OsWdiVersion ? dev->OsWdiVersion : WDI_VERSION_LATEST };
+        ULONG bufLen = 0;
+        UINT8* genBuf = NULL;
+        NDIS_STATUS gs = GenerateWdiIndicationRadioStatusFromIhv(
+            &params, sizeof(WDI_MESSAGE_HEADER), &ctx, &bufLen, &genBuf);
+        if (gs == NDIS_STATUS_SUCCESS && genBuf != NULL && bufLen >= sizeof(WDI_MESSAGE_HEADER)) {
+            PWDI_MESSAGE_HEADER ih = (PWDI_MESSAGE_HEADER)genBuf;
+            RtlZeroMemory(ih, sizeof(*ih));
+            ih->PortId = 0xFFFF;
+            ih->TransactionId = 0;  // unsolicited
+            ih->Status = STATUS_SUCCESS;
+
+            WDFMEMORY mem2 = NULL;
+            PVOID memBuf = NULL;
+            NTSTATUS ms2 = WdfMemoryCreate(
+                WDF_NO_OBJECT_ATTRIBUTES, NonPagedPoolNx, 'IFiW',
+                bufLen, &mem2, &memBuf);
+            if (NT_SUCCESS(ms2)) {
+                RtlCopyMemory(memBuf, genBuf, bufLen);
+                WifiDeviceReceiveIndication(wdfDevice, WDI_INDICATION_RADIO_STATUS, mem2);
+                WdfObjectDelete(mem2);
+            }
+        }
+        if (genBuf) FreeGenerated(genBuf);
+
+        InterlockedIncrement(&dev->RadioQueueHead);
+    }
 }

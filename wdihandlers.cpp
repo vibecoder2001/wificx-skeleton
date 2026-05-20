@@ -52,6 +52,12 @@ static NTSTATUS HandleDeletePort(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_
                                  UINT inLen, UINT outLen, _Out_ UINT* bytesWritten);
 static NTSTATUS HandleStartScan(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
                                 UINT inLen, UINT outLen, _Out_ UINT* bytesWritten);
+static NTSTATUS HandleDot11Reset(WDFDEVICE WdfDevice, WIFIREQUEST req,
+                                 PWDI_MESSAGE_HEADER hdr, UINT outLen, _Out_ UINT* bytesWritten);
+static NTSTATUS HandleGetStatistics(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
+                                    UINT inLen, UINT outLen, _Out_ UINT* bytesWritten);
+static NTSTATUS HandleSetLocationPrivacy(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
+                                         UINT inLen, UINT outLen, _Out_ UINT* bytesWritten);
 
 void
 WdiDispatchCommand(
@@ -88,6 +94,12 @@ WdiDispatchCommand(
         status = HandleDeletePort(dev, Request, hdr, inLen, outLen, &bytesWritten); break;
     case WDI_TASK_SCAN:
         status = HandleStartScan(dev, Request, hdr, inLen, outLen, &bytesWritten); break;
+    case WDI_TASK_DOT11_RESET:
+        status = HandleDot11Reset(WdfDevice, Request, hdr, outLen, &bytesWritten); break;
+    case WDI_GET_STATISTICS:
+        status = HandleGetStatistics(dev, Request, hdr, inLen, outLen, &bytesWritten); break;
+    case WDI_SET_LOCATION_PRIVACY:
+        status = HandleSetLocationPrivacy(dev, Request, hdr, inLen, outLen, &bytesWritten); break;
     default:
         DbgPrint("WDI: unhandled MessageID 0x%x (in=%u out=%u)\n", messageId, inLen, outLen);
         break;
@@ -138,10 +150,46 @@ static NTSTATUS HandleSetAdapterConfig(MTK_DEVICE*, WIFIREQUEST req, PWDI_MESSAG
 }
 
 static NTSTATUS HandleSetRadioState(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
-                                    UINT, UINT outLen, UINT* bw) {
-    dev->RadioOn = TRUE;
+                                    UINT inLen, UINT outLen, UINT* bw) {
+    TraceLoggingWrite(WiFiCxSampleTraceProvider, "SetRadioStateEntry",
+        TraceLoggingUInt32(inLen, "inLen"),
+        TraceLoggingUInt16(hdr->PortId, "PortId"),
+        TraceLoggingUInt32(hdr->TransactionId, "Txn"));
+    BOOLEAN softOn = TRUE;
+    if (inLen > sizeof(WDI_MESSAGE_HEADER)) {
+        WDI_SET_RADIO_STATE_PARAMETERS params;
+        TLV_CONTEXT ctx = { 0, dev->OsWdiVersion ? dev->OsWdiVersion : WDI_VERSION_LATEST };
+        const UINT8* tlv = (const UINT8*)hdr + sizeof(WDI_MESSAGE_HEADER);
+        ULONG tlvLen = inLen - sizeof(WDI_MESSAGE_HEADER);
+        NDIS_STATUS ps = ParseWdiTaskSetRadioStateToIhv(tlvLen, tlv, &ctx, &params);
+        if (ps == NDIS_STATUS_SUCCESS) {
+            softOn = (BOOLEAN)(params.SoftwareRadioState != 0);
+            CleanupParsedWdiTaskSetRadioStateToIhv(&params);
+        }
+    }
+    dev->RadioOn = softOn;
+    TraceLoggingWrite(WiFiCxSampleTraceProvider, "SetRadioStateHandler",
+        TraceLoggingUInt8(softOn, "SoftOn"),
+        TraceLoggingUInt16(hdr->PortId, "PortId"),
+        TraceLoggingUInt32(hdr->TransactionId, "Txn"));
+
     *bw = WriteWdiResponseHeader(req, hdr, outLen);
-    return *bw ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL;
+    if (*bw == 0) return STATUS_BUFFER_TOO_SMALL;
+
+    // Every SET_RADIO_STATE task needs its matching *_COMPLETE indication
+    // (id 22) — fire it deferred via workitem (firing inline killed the
+    // adapter, same pattern as DOT11_RESET).
+    LONG slot = InterlockedIncrement(&dev->RadioQueueTail) - 1;
+    if (slot - dev->RadioQueueHead < 16) {
+        UINT idx = slot & 0xF;
+        dev->RadioQueue[idx].PortId = hdr->PortId;
+        dev->RadioQueue[idx].TxnId  = hdr->TransactionId;
+        dev->RadioQueue[idx].SoftOn = softOn;
+        WdfWorkItemEnqueue(dev->RadioStatusWorkItem);
+    } else {
+        InterlockedDecrement(&dev->RadioQueueTail);
+    }
+    return STATUS_SUCCESS;
 }
 
 static NTSTATUS HandleCreatePort(MTK_DEVICE*, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
@@ -156,18 +204,95 @@ static NTSTATUS HandleDeletePort(MTK_DEVICE*, WIFIREQUEST req, PWDI_MESSAGE_HEAD
     return *bw ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL;
 }
 
+// WDI_GET_STATISTICS (0x22 = 34) — needs a TLV-encoded WDI_GET_STATISTICS_
+// PARAMETERS with at least one MAC stats entry (broadcast MAC) and one PHY
+// stats entry. Header echo alone makes nwifi reject with 0xC0000001.
+static NTSTATUS HandleGetStatistics(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
+                                    UINT, UINT outLen, UINT* bw)
+{
+    WDI_GET_STATISTICS_PARAMETERS params;
+
+    WDI_MAC_STATISTICS_CONTAINER macStats[1];   // zeroed via default ctor
+    static const UINT8 bcast[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    RtlCopyMemory(macStats[0].MACAddress.Address, bcast, 6);
+    params.PeerMACStatistics.SimpleAssign(macStats, 1);
+
+    WDI_PHY_STATISTICS_CONTAINER phyStats[1];   // zeroed via default ctor
+    phyStats[0].PhyType = WDI_PHY_TYPE_HT;
+    params.PhyStatistics.SimpleAssign(phyStats, 1);
+
+    TLV_CONTEXT ctx = { 0, dev->OsWdiVersion ? dev->OsWdiVersion : WDI_VERSION_LATEST };
+    ULONG bufLen = 0;
+    UINT8* genBuf = NULL;
+    NDIS_STATUS gs = GenerateWdiGetStatisticsFromIhv(
+        &params,
+        sizeof(WDI_MESSAGE_HEADER),
+        &ctx,
+        &bufLen,
+        &genBuf);
+    if (gs != NDIS_STATUS_SUCCESS || genBuf == NULL) {
+        DbgPrint("MTK: GenerateWdiGetStatistics failed 0x%x\n", gs);
+        if (genBuf) FreeGenerated(genBuf);
+        *bw = 0;
+        return STATUS_UNSUCCESSFUL;
+    }
+    if (bufLen > outLen) {
+        DbgPrint("MTK: GetStatistics buf too large %u > %u\n", bufLen, outLen);
+        FreeGenerated(genBuf);
+        *bw = 0;
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+
+    PVOID outBuf = WifiRequestGetInOutBuffer(req, NULL, NULL);
+    RtlCopyMemory(outBuf, genBuf, bufLen);
+    PWDI_MESSAGE_HEADER outHdr = (PWDI_MESSAGE_HEADER)outBuf;
+    outHdr->PortId = hdr->PortId;
+    outHdr->Reserved = 0;
+    outHdr->Status = STATUS_SUCCESS;
+    outHdr->TransactionId = hdr->TransactionId;
+    outHdr->IhvSpecificId = 0;
+
+    *bw = bufLen;
+    FreeGenerated(genBuf);
+    return STATUS_SUCCESS;
+}
+
+// WDI_SET_LOCATION_PRIVACY (0x8A = 138) — sync ack.
+static NTSTATUS HandleSetLocationPrivacy(MTK_DEVICE*, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
+                                          UINT, UINT outLen, UINT* bw) {
+    *bw = WriteWdiResponseHeader(req, hdr, outLen);
+    return *bw ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL;
+}
+
 // ---------- scan ----------
 
 static NTSTATUS
 HandleStartScan(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
                 UINT, UINT outLen, UINT* bw)
 {
-    dev->ActiveScanTransactionId = hdr->TransactionId;
-    dev->ActiveScanPortId = hdr->PortId;
-    WdfWorkItemEnqueue(dev->ScanCompleteWorkItem);
-    // Workitem fires WDI_INDICATION_SCAN_COMPLETE. BSS entry list
-    // (WDI_INDICATION_BSS_ENTRY_LIST) is not yet emitted — needs TLV
-    // encoding via wlan\2.0\TlvGenerated_.hpp.
+    // Radio off: ack the task but emit no BSS list / SCAN_COMPLETE only.
+    // Otherwise wlansvc would still see fake networks even with radio off.
+    if (!dev->RadioOn) {
+        *bw = WriteWdiResponseHeader(req, hdr, outLen);
+        return *bw ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL;
+    }
+    // Ack the SCAN task synchronously so the Task is gone BEFORE the
+    // BSS_ENTRY_LIST indication arrives — otherwise the indication is
+    // hijacked by Task::OnDeviceIndicationArrived and never reaches the
+    // CPort BSS-ingest path (confirmed via kd trace).
+    LONG slot = InterlockedIncrement(&dev->ScanQueueTail) - 1;
+    if (slot - dev->ScanQueueHead < 16) {
+        UINT idx = slot & 0xF;
+        dev->ScanQueue[idx].PortId  = hdr->PortId;
+        dev->ScanQueue[idx].TxnId   = hdr->TransactionId;
+        dev->ScanQueue[idx].Request = NULL;  // workitem must NOT complete it
+        dev->ActiveScanPortId = hdr->PortId;
+        dev->ActiveScanTransactionId = hdr->TransactionId;
+        WdfWorkItemEnqueue(dev->ScanCompleteWorkItem);
+    } else {
+        InterlockedDecrement(&dev->ScanQueueTail);
+        DbgPrint("MTK: SCAN queue full, dropping\n");
+    }
     *bw = WriteWdiResponseHeader(req, hdr, outLen);
     return *bw ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL;
 }
@@ -178,10 +303,42 @@ static NTSTATUS
 HandleGetAdapterCaps(MTK_DEVICE*, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
                     UINT, UINT outLen, UINT* bw)
 {
-    // Caps are framework-synthesized from WifiDeviceSet*Capabilities;
-    // we just acknowledge with a header echo.
+    // Caps are framework-synthesized from WifiDeviceSet*Capabilities; bare
+    // header echo. (WDI_GET_ADAPTER_CAPABILITIES = 37 is rarely sent on
+    // WiFiCx — the framework satisfies most queries internally.)
     *bw = WriteWdiResponseHeader(req, hdr, outLen);
     return *bw ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL;
+}
+
+// WDI_TASK_DOT11_RESET (id=7) — sync ack, plus DEFERRED indication via
+// workitem. WiFiCx tracks outstanding TASK_*'s and fires hardware-failure
+// at ~30s via Task::OnTimerCallback if the matching *_COMPLETE indication
+// never arrives. Firing the indication inline killed nwifi within 2ms
+// (probably arrived before WifiRequestComplete returned). Queue it on a
+// workitem so it dispatches after the request is fully completed.
+static NTSTATUS HandleDot11Reset(WDFDEVICE WdfDevice, WIFIREQUEST req,
+                                 PWDI_MESSAGE_HEADER hdr, UINT outLen, UINT* bw)
+{
+    *bw = WriteWdiResponseHeader(req, hdr, outLen);
+    if (!*bw) return STATUS_BUFFER_TOO_SMALL;
+
+    MTK_DEVICE* dev = MtkGetDeviceContext(WdfDevice);
+
+    // Multiple DOT11_RESET requests can stack up (OS often issues two
+    // back-to-back). Append to a small fixed queue; the workitem drains it.
+    // Drop if queue full (16 slots).
+    LONG slot = InterlockedIncrement(&dev->ResetQueueTail) - 1;
+    if (slot - dev->ResetQueueHead < 16) {
+        UINT idx = slot & 0xF;   // 16-slot circular buffer
+        dev->ResetQueue[idx].PortId = hdr->PortId;
+        dev->ResetQueue[idx].TxnId  = hdr->TransactionId;
+        WdfWorkItemEnqueue(dev->ResetCompleteWorkItem);
+    } else {
+        // queue full — give up the slot
+        InterlockedDecrement(&dev->ResetQueueTail);
+        DbgPrint("MTK: RESET queue full, dropping\n");
+    }
+    return STATUS_SUCCESS;
 }
 
 // ---------- BSS-list indication (TLV-encoded) ----------
@@ -207,13 +364,10 @@ WdiEmitBssEntryList(_In_ WDFDEVICE WdfDevice)
     SIZE_T fakeCount = 0;
     const FAKE_BSS_ENTRY* fake = FakeBssGetTable(&fakeCount);
 
-    // Build WDI BSS entry array from our fake table. Stack-allocate since
-    // FAKE_BSS_COUNT is small and fixed (4).
     WDI_BSS_ENTRY_CONTAINER entries[FAKE_BSS_COUNT];
 
     for (SIZE_T i = 0; i < fakeCount; ++i) {
         WDI_BSS_ENTRY_CONTAINER& e = entries[i];
-        // (default ctor zeros Optional + BSSID)
 
         RtlCopyMemory(e.BSSID.Address, fake[i].Bssid, 6);
 
@@ -224,11 +378,16 @@ WdiEmitBssEntryList(_In_ WDFDEVICE WdfDevice)
         e.ChannelInfo.ChannelNumber = FreqToChannel(fake[i].ChannelCenterFrequencyMhz);
         e.ChannelInfo.BandId = FreqToBand(fake[i].ChannelCenterFrequencyMhz);
 
-        // Beacon frame: full 802.11 body (12B fixed + IEs).
         e.BeaconFrame.SimpleAssign(
             const_cast<UINT8*>(fake[i].BeaconBuffer),
             (UINT32)fake[i].BeaconLength);
         e.Optional.BeaconFrame_IsPresent = TRUE;
+
+        LARGE_INTEGER ts;
+        KeQueryTickCount(&ts);
+        e.EntryAgeInfo.HostTimeStamp = (UINT64)ts.QuadPart;
+        e.EntryAgeInfo.CachedInformation = FALSE;
+        e.Optional.EntryAgeInfo_IsPresent = TRUE;
     }
 
     WDI_INDICATION_BSS_ENTRY_LIST_PARAMETERS params;
@@ -240,24 +399,31 @@ WdiEmitBssEntryList(_In_ WDFDEVICE WdfDevice)
     UINT8* genBuf = NULL;
     NDIS_STATUS gs = GenerateWdiIndicationBssEntryListFromIhv(
         &params,
-        sizeof(WDI_MESSAGE_HEADER),   // reserve room at front for the header
+        sizeof(WDI_MESSAGE_HEADER),
         &ctx,
         &bufLen,
         &genBuf);
+    TraceLoggingWrite(WiFiCxSampleTraceProvider, "BssListGenerate",
+        TraceLoggingHexUInt32(gs, "gs"),
+        TraceLoggingUInt32(bufLen, "bufLen"),
+        TraceLoggingUInt32((UINT32)fakeCount, "fakeCount"));
     if (gs != NDIS_STATUS_SUCCESS || genBuf == NULL || bufLen < sizeof(WDI_MESSAGE_HEADER)) {
         DbgPrint("MTK: GenerateWdiIndicationBssEntryListFromIhv failed 0x%x\n", gs);
         if (genBuf) FreeGenerated(genBuf);
         return;
     }
 
-    // Fill the reserved WDI_MESSAGE_HEADER.
     PWDI_MESSAGE_HEADER hdr = (PWDI_MESSAGE_HEADER)genBuf;
     RtlZeroMemory(hdr, sizeof(*hdr));
     hdr->PortId = dev->ActiveScanPortId;
-    hdr->TransactionId = dev->ActiveScanTransactionId;
+    // CRITICAL: TransactionId MUST be 0 (unsolicited) on BSS_ENTRY_LIST.
+    // Per Task::OnDeviceIndicationArrived disasm: a matching TxnId+PortId
+    // causes the SCAN Task to treat THIS indication as its completion and
+    // discard the BSS payload. Use 0 so it falls through to the
+    // CPort::OnDeviceIndicationArrived BSS-ingest path instead.
+    hdr->TransactionId = 0;
     hdr->Status = STATUS_SUCCESS;
 
-    // Copy to a WDFMEMORY for WifiDeviceReceiveIndication.
     WDFMEMORY memory = NULL;
     PVOID memBuf = NULL;
     NTSTATUS ns = WdfMemoryCreate(

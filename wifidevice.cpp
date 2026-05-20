@@ -1,4 +1,5 @@
 #include "precomp.h"
+#include <wlan/2.0/TlvGeneratorParser.hpp>
 #include "trace.h"
 #include "device.h"
 #include "wifidevice.h"
@@ -100,6 +101,10 @@ EvtWiFiDeviceCreateAdapter(
             DbgPrint("MTK: fired WDI_INDICATION_OPEN_COMPLETE\n");
         }
     }
+    // Tried WDI_INDICATION_RADIO_STATUS after OPEN_COMPLETE — didn't unlock
+    // wlansvc; 5002 came back. Reverted. Real wlansvc enumeration goes
+    // through a path that doesn't dispatch to our WDI handler — wlansvc
+    // says "cannot be queried, error 0x1F" without sending any WDI commands.
 
 Exit:
     DbgPrint("MTK: EvtWiFiDeviceCreateAdapter exit status=0x%x\n", status);
@@ -142,26 +147,9 @@ EvtWifiDeviceCreateWiFiDirectDevice(
     _In_ WIFIDIRECT_DEVICE_INIT* WfdDeviceInit
 )
 {
-    TraceEntry();
-
-    NTSTATUS status;
-
-    WDF_OBJECT_ATTRIBUTES wfdDeviceAttributes;
-    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&wfdDeviceAttributes, MTK_WIFIDIRECTDEVICE);
-
-    WIFIDIRECTDEVICE wfdDevice;
-    GOTO_IF_NOT_NT_SUCCESS(Exit, status,
-        WifiDirectDeviceCreate(WfdDeviceInit, &wfdDeviceAttributes, &wfdDevice));
-
-    GOTO_IF_NOT_NT_SUCCESS(Exit, status,
-        WifiDirectDeviceInitialize(wfdDevice));
-
-    PMTK_WIFIDIRECTDEVICE wfdContext = MtkGetWifiDirectContext(wfdDevice);
-    wfdContext->WdfDevice = Device;
-    wfdContext->WifiDirectDevice = wfdDevice;
-
-Exit:
-    TraceExitResult(status);
-
-    return status;
+    UNREFERENCED_PARAMETER(Device);
+    UNREFERENCED_PARAMETER(WfdDeviceInit);
+    // Station-only fake driver: refuse to create a WiFiDirect device so
+    // the framework doesn't spawn a second NetAdapter with our MAC.
+    return STATUS_NOT_SUPPORTED;
 }

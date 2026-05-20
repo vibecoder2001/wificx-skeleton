@@ -106,7 +106,7 @@
   </ImportGroup>
   <ItemGroup Label="WrappedTaskItems">
     <Inf Include="wificx-skl.inx">
-      <DateStamp>*</DateStamp>
+      <DateStamp>05/20/2026</DateStamp>
       <SpecifyDriverVerDirectiveDate>true</SpecifyDriverVerDirectiveDate>
       <Architecture>$(InfArch)</Architecture>
       <SpecifyArchitecture>true</SpecifyArchitecture>
