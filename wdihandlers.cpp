@@ -3,7 +3,6 @@
 #include "trace.h"
 #include "device.h"
 #include "adapter.h"
-#include "fakebss.h"
 #include "wdihandlers.h"
 
 // The TLV generator (WificxTLVGenParse.lib) and its ArrayOfElements<T>
@@ -168,6 +167,9 @@ static NTSTATUS HandleSetRadioState(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSA
         }
     }
     dev->RadioOn = softOn;
+    if (dev->ChipOps && dev->ChipOps->SetRadio) {
+        (void)dev->ChipOps->SetRadio(dev->ChipCtx, softOn);
+    }
     TraceLoggingWrite(WiFiCxSampleTraceProvider, "SetRadioStateHandler",
         TraceLoggingUInt8(softOn, "SoftOn"),
         TraceLoggingUInt16(hdr->PortId, "PortId"),
@@ -361,26 +363,38 @@ WdiEmitBssEntryList(_In_ WDFDEVICE WdfDevice)
 {
     MTK_DEVICE* dev = MtkGetDeviceContext(WdfDevice);
 
-    SIZE_T fakeCount = 0;
-    const FAKE_BSS_ENTRY* fake = FakeBssGetTable(&fakeCount);
+    // Pull raw entries from the chip backend (fake or real). Cap at
+    // 8 — Phase 2 will replace this with a paged drain from a real
+    // scan-result cache.
+    constexpr SIZE_T MAX_ENTRIES = 8;
+    WDI_BSS_RAW_ENTRY raw[MAX_ENTRIES];
+    SIZE_T rawCount = 0;
+    if (!dev->ChipOps || !dev->ChipOps->GetScanResults) {
+        return;
+    }
+    NTSTATUS srStatus = dev->ChipOps->GetScanResults(
+        dev->ChipCtx, raw, MAX_ENTRIES, &rawCount);
+    if (!NT_SUCCESS(srStatus) || rawCount == 0) {
+        return;
+    }
 
-    WDI_BSS_ENTRY_CONTAINER entries[FAKE_BSS_COUNT];
+    WDI_BSS_ENTRY_CONTAINER entries[MAX_ENTRIES];
 
-    for (SIZE_T i = 0; i < fakeCount; ++i) {
+    for (SIZE_T i = 0; i < rawCount; ++i) {
         WDI_BSS_ENTRY_CONTAINER& e = entries[i];
 
-        RtlCopyMemory(e.BSSID.Address, fake[i].Bssid, 6);
+        RtlCopyMemory(e.BSSID.Address, raw[i].Bssid, 6);
 
-        e.SignalInfo.RSSI = fake[i].RssiDbm;
+        e.SignalInfo.RSSI = raw[i].RssiDbm;
         e.SignalInfo.LinkQuality =
-            (UINT32)max(0, min(100, (INT32)(2 * (fake[i].RssiDbm + 100))));
+            (UINT32)max(0, min(100, (INT32)(2 * (raw[i].RssiDbm + 100))));
 
-        e.ChannelInfo.ChannelNumber = FreqToChannel(fake[i].ChannelCenterFrequencyMhz);
-        e.ChannelInfo.BandId = FreqToBand(fake[i].ChannelCenterFrequencyMhz);
+        e.ChannelInfo.ChannelNumber = FreqToChannel(raw[i].ChannelCenterFrequencyMhz);
+        e.ChannelInfo.BandId = FreqToBand(raw[i].ChannelCenterFrequencyMhz);
 
         e.BeaconFrame.SimpleAssign(
-            const_cast<UINT8*>(fake[i].BeaconBuffer),
-            (UINT32)fake[i].BeaconLength);
+            const_cast<UINT8*>(raw[i].BeaconBuffer),
+            (UINT32)raw[i].BeaconLength);
         e.Optional.BeaconFrame_IsPresent = TRUE;
 
         LARGE_INTEGER ts;
@@ -391,7 +405,7 @@ WdiEmitBssEntryList(_In_ WDFDEVICE WdfDevice)
     }
 
     WDI_INDICATION_BSS_ENTRY_LIST_PARAMETERS params;
-    params.DeviceDescriptor.SimpleAssign(entries, (UINT32)fakeCount);
+    params.DeviceDescriptor.SimpleAssign(entries, (UINT32)rawCount);
     params.Optional.DeviceDescriptor_IsPresent = TRUE;
 
     TLV_CONTEXT ctx = { 0, dev->OsWdiVersion ? dev->OsWdiVersion : WDI_VERSION_LATEST };
@@ -406,7 +420,7 @@ WdiEmitBssEntryList(_In_ WDFDEVICE WdfDevice)
     TraceLoggingWrite(WiFiCxSampleTraceProvider, "BssListGenerate",
         TraceLoggingHexUInt32(gs, "gs"),
         TraceLoggingUInt32(bufLen, "bufLen"),
-        TraceLoggingUInt32((UINT32)fakeCount, "fakeCount"));
+        TraceLoggingUInt32((UINT32)rawCount, "rawCount"));
     if (gs != NDIS_STATUS_SUCCESS || genBuf == NULL || bufLen < sizeof(WDI_MESSAGE_HEADER)) {
         DbgPrint("MTK: GenerateWdiIndicationBssEntryListFromIhv failed 0x%x\n", gs);
         if (genBuf) FreeGenerated(genBuf);

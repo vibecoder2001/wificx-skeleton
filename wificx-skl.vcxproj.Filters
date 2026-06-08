@@ -35,6 +35,9 @@
     <ClCompile Include="adapter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="chip_fake.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="device.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -64,10 +67,16 @@
     <ClInclude Include="adapter.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="chip_fake.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="device.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="fakebss.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="wdi_chip_ops.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="forward.h">

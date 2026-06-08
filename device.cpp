@@ -5,6 +5,7 @@
 #include "device.h"
 #include "adapter.h"
 #include "wdihandlers.h"
+#include "chip_fake.h"
 
 EVT_WDF_WORKITEM EvtScanCompleteWorkItem;
 EVT_WDF_WORKITEM EvtResetCompleteWorkItem;
@@ -193,6 +194,13 @@ MtkInitializeHardware(
     pDevice->OsWdiVersion = WifiDeviceGetOsWdiVersion(pDevice->FxDevice);
     DbgPrint("MTK: OS WDI version = 0x%x\n", pDevice->OsWdiVersion);
 
+    // Install the chip backend. Real-HW forks swap ChipFakeGetOps()
+    // for their own ChipXxxGetOps() here.
+    pDevice->ChipOps = ChipFakeGetOps();
+    GOTO_IF_NOT_NT_SUCCESS(Exit, status,
+        pDevice->ChipOps->Init(pDevice->FxDevice, &pDevice->ChipCtx));
+    DbgPrint("MTK: chip backend (fake) initialized\n");
+
 Exit:
     TraceExitResult(status);
     return status;
@@ -227,6 +235,10 @@ EvtDeviceReleaseHardware(
     MTK_DEVICE* devContext = MtkGetDeviceContext(device);
 
     TraceEntry();
+
+    if (devContext->ChipOps != NULL && devContext->ChipOps->Deinit != NULL) {
+        devContext->ChipOps->Deinit(device, devContext->ChipCtx);
+    }
 
     NTSTATUS status = STATUS_SUCCESS;
     TraceExitResult(status);

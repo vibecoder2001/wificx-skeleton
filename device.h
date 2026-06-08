@@ -1,9 +1,17 @@
 #pragma once
 
+#include "wdi_chip_ops.h"
+
 typedef struct _MTK_DEVICE
 {
     MTK_ADAPTER* Adapter;
     WDFDEVICE FxDevice;
+
+    // Chip backend behind the WDI layer. The skeleton installs the
+    // fake backend in MtkInitializeHardware; a real-HW fork swaps in
+    // its own ChipXxxGetOps() there. See wdi_chip_ops.h.
+    const WDI_CHIP_OPS* ChipOps;
+    WDI_CHIP_CTX        ChipCtx;
 
     // Phase 3: WDI session state
     BOOLEAN AdapterOpened;

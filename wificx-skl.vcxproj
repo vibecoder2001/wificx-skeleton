@@ -203,6 +203,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="adapter.h" />
+    <ClInclude Include="chip_fake.h" />
     <ClInclude Include="device.h" />
     <ClInclude Include="fakebss.h" />
     <ClInclude Include="forward.h" />
@@ -212,11 +213,13 @@
     <ClInclude Include="rxqueue.h" />
     <ClInclude Include="trace.h" />
     <ClInclude Include="txqueue.h" />
+    <ClInclude Include="wdi_chip_ops.h" />
     <ClInclude Include="wdihandlers.h" />
     <ClInclude Include="wifidevice.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="adapter.cpp" />
+    <ClCompile Include="chip_fake.cpp" />
     <ClCompile Include="device.cpp" />
     <ClCompile Include="driver.cpp" />
     <ClCompile Include="fakebss.cpp" />
