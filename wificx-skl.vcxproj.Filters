@@ -56,6 +56,9 @@
     <ClCompile Include="txqueue.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="wdi_frame.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="wdihandlers.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -77,6 +80,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="wdi_chip_ops.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="wdi_frame.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="forward.h">

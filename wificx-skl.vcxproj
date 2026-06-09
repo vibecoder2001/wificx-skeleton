@@ -214,6 +214,7 @@
     <ClInclude Include="trace.h" />
     <ClInclude Include="txqueue.h" />
     <ClInclude Include="wdi_chip_ops.h" />
+    <ClInclude Include="wdi_frame.h" />
     <ClInclude Include="wdihandlers.h" />
     <ClInclude Include="wifidevice.h" />
   </ItemGroup>
@@ -226,6 +227,7 @@
     <ClCompile Include="power.cpp" />
     <ClCompile Include="rxqueue.cpp" />
     <ClCompile Include="txqueue.cpp" />
+    <ClCompile Include="wdi_frame.cpp" />
     <ClCompile Include="wdihandlers.cpp" />
     <ClCompile Include="wifidevice.cpp" />
   </ItemGroup>

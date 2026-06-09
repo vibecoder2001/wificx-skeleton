@@ -4,6 +4,7 @@
 #include "device.h"
 #include "adapter.h"
 #include "wdihandlers.h"
+#include "wdi_frame.h"
 
 // The TLV generator (WificxTLVGenParse.lib) and its ArrayOfElements<T>
 // templates call standard C++ new/delete. Kernel mode has no CRT, so
@@ -345,19 +346,6 @@ static NTSTATUS HandleDot11Reset(WDFDEVICE WdfDevice, WIFIREQUEST req,
 
 // ---------- BSS-list indication (TLV-encoded) ----------
 
-static UCHAR
-FreqToChannel(UINT32 freqMhz)
-{
-    if (freqMhz <= 2484) return (UCHAR)((freqMhz - 2407) / 5);
-    return (UCHAR)((freqMhz - 5000) / 5);
-}
-
-static WDI_BAND_ID
-FreqToBand(UINT32 freqMhz)
-{
-    return (freqMhz < 4000) ? WDI_BAND_ID_2400 : WDI_BAND_ID_5000;
-}
-
 void
 WdiEmitBssEntryList(_In_ WDFDEVICE WdfDevice)
 {
@@ -389,8 +377,8 @@ WdiEmitBssEntryList(_In_ WDFDEVICE WdfDevice)
         e.SignalInfo.LinkQuality =
             (UINT32)max(0, min(100, (INT32)(2 * (raw[i].RssiDbm + 100))));
 
-        e.ChannelInfo.ChannelNumber = FreqToChannel(raw[i].ChannelCenterFrequencyMhz);
-        e.ChannelInfo.BandId = FreqToBand(raw[i].ChannelCenterFrequencyMhz);
+        e.ChannelInfo.ChannelNumber = WdiFreqToChannel(raw[i].ChannelCenterFrequencyMhz);
+        e.ChannelInfo.BandId = WdiFreqToBand(raw[i].ChannelCenterFrequencyMhz);
 
         e.BeaconFrame.SimpleAssign(
             const_cast<UINT8*>(raw[i].BeaconBuffer),

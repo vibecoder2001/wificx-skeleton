@@ -1,5 +1,6 @@
 #include "precomp.h"
 #include "fakebss.h"
+#include "wdi_frame.h"
 
 static FAKE_BSS_ENTRY g_FakeBss[FAKE_BSS_COUNT] = {
     { { 0x02, 0xAA, 0xBB, 0x00, 0x00, 0x01 },
@@ -17,42 +18,23 @@ static FAKE_BSS_ENTRY g_FakeBss[FAKE_BSS_COUNT] = {
 };
 static BOOLEAN g_IesBuilt = FALSE;
 
-static SIZE_T
-AppendIe(_Out_writes_bytes_(remaining) UCHAR* dst, SIZE_T remaining,
-         UCHAR id, const UCHAR* data, UCHAR len)
-{
-    if (remaining < (SIZE_T)(2 + len)) return 0;
-    dst[0] = id;
-    dst[1] = len;
-    if (len) RtlCopyMemory(dst + 2, data, len);
-    return 2 + len;
-}
-
 static void
 FakeBssBuildIes(FAKE_BSS_ENTRY* e)
 {
     SIZE_T off = 0;
 
-    // SSID IE (id 0)
-    off += AppendIe(e->IeBuffer + off, FAKE_BSS_MAX_IE_SIZE - off,
-                    0, e->Ssid, e->SsidLength);
+    off += WdiIeAppend(e->IeBuffer + off, FAKE_BSS_MAX_IE_SIZE - off,
+                       WDI_IE_ID_SSID, e->Ssid, e->SsidLength);
 
-    // Supported Rates IE (id 1): 1/2/5.5/11/6/9/12/18 Mbps, basic bit on first four.
+    // Supported Rates: 1/2/5.5/11/6/9/12/18 Mbps, basic bit on first four.
     static const UCHAR rates[] = { 0x82, 0x84, 0x8B, 0x96, 0x0C, 0x12, 0x18, 0x24 };
-    off += AppendIe(e->IeBuffer + off, FAKE_BSS_MAX_IE_SIZE - off,
-                    1, rates, sizeof(rates));
+    off += WdiIeAppend(e->IeBuffer + off, FAKE_BSS_MAX_IE_SIZE - off,
+                       WDI_IE_ID_SUPPORTED_RATES, rates, sizeof(rates));
 
-    // DS Parameter Set IE (id 3): channel number derived from frequency.
-    UCHAR ch;
-    if (e->ChannelCenterFrequencyMhz <= 2484) {
-        ch = (UCHAR)((e->ChannelCenterFrequencyMhz - 2407) / 5);
-    } else {
-        ch = (UCHAR)((e->ChannelCenterFrequencyMhz - 5000) / 5);
-    }
-    off += AppendIe(e->IeBuffer + off, FAKE_BSS_MAX_IE_SIZE - off,
-                    3, &ch, 1);
+    UCHAR ch = WdiFreqToChannel(e->ChannelCenterFrequencyMhz);
+    off += WdiIeAppend(e->IeBuffer + off, FAKE_BSS_MAX_IE_SIZE - off,
+                       WDI_IE_ID_DS_PARAMETER_SET, &ch, 1);
 
-    // RSN IE (id 48): WPA2-PSK / CCMP.
     if (e->UseRsn) {
         static const UCHAR rsn[] = {
             0x01, 0x00,                   // RSN version 1
@@ -63,8 +45,8 @@ FakeBssBuildIes(FAKE_BSS_ENTRY* e)
             0x00, 0x0F, 0xAC, 0x02,       // AKM: PSK
             0x00, 0x00                    // RSN capabilities
         };
-        off += AppendIe(e->IeBuffer + off, FAKE_BSS_MAX_IE_SIZE - off,
-                        48, rsn, sizeof(rsn));
+        off += WdiIeAppend(e->IeBuffer + off, FAKE_BSS_MAX_IE_SIZE - off,
+                           WDI_IE_ID_RSN, rsn, sizeof(rsn));
     }
 
     e->IeLength = off;
@@ -76,13 +58,13 @@ FakeBssBuildBeaconBody(FAKE_BSS_ENTRY* e)
     // 802.11 beacon frame body: 8B Timestamp + 2B BeaconInterval + 2B
     // CapabilityInfo, then the variable IE section.
     UCHAR* p = e->BeaconBuffer;
-    RtlZeroMemory(p, 8);                                  // Timestamp = 0
-    p[8]  = (UCHAR)(e->BeaconIntervalTU & 0xff);
-    p[9]  = (UCHAR)((e->BeaconIntervalTU >> 8) & 0xff);
-    p[10] = (UCHAR)(e->CapabilityInfo & 0xff);
-    p[11] = (UCHAR)((e->CapabilityInfo >> 8) & 0xff);
-    RtlCopyMemory(p + FAKE_BSS_BEACON_FIXED_LEN, e->IeBuffer, e->IeLength);
-    e->BeaconLength = FAKE_BSS_BEACON_FIXED_LEN + e->IeLength;
+    RtlZeroMemory(p + WDI_BEACON_OFF_TIMESTAMP, 8);
+    p[WDI_BEACON_OFF_BEACON_INTERVAL]     = (UCHAR)(e->BeaconIntervalTU & 0xff);
+    p[WDI_BEACON_OFF_BEACON_INTERVAL + 1] = (UCHAR)((e->BeaconIntervalTU >> 8) & 0xff);
+    p[WDI_BEACON_OFF_CAPABILITY]          = (UCHAR)(e->CapabilityInfo & 0xff);
+    p[WDI_BEACON_OFF_CAPABILITY + 1]      = (UCHAR)((e->CapabilityInfo >> 8) & 0xff);
+    RtlCopyMemory(p + WDI_BEACON_FIXED_LEN, e->IeBuffer, e->IeLength);
+    e->BeaconLength = WDI_BEACON_FIXED_LEN + e->IeLength;
 }
 
 const FAKE_BSS_ENTRY*
