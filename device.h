@@ -2,6 +2,7 @@
 
 #include "wdi_chip_ops.h"
 #include "wdi_scan_cache.h"
+#include "wdi_connect.h"
 
 typedef struct _MTK_DEVICE
 {
@@ -48,6 +49,29 @@ typedef struct _MTK_DEVICE
     struct { UINT32 TxnId; UINT16 PortId; BOOLEAN SoftOn; } RadioQueue[16];
     LONG RadioQueueHead;
     LONG RadioQueueTail;
+
+    // Connect / disconnect tasks. Same queue + workitem pattern.
+    //
+    // ConnectPortId / ConnectTxnId are the *current* (active) connect
+    // task — set by the workitem before it calls ChipOps->Connect so
+    // that WdiEmitAssociationResult can find them. WdiEmitDisassoc
+    // also reads ConnectPortId for AP-initiated kicks mid-session.
+    UINT16 ConnectPortId;
+    UINT32 ConnectTxnId;
+
+    WDFWORKITEM ConnectCompleteWorkItem;
+    struct {
+        UINT32 TxnId;
+        UINT16 PortId;
+        WDI_CONNECT_TARGET Target;
+    } ConnectQueue[8];
+    LONG ConnectQueueHead;
+    LONG ConnectQueueTail;
+
+    WDFWORKITEM DisconnectCompleteWorkItem;
+    struct { UINT32 TxnId; UINT16 PortId; } DisconnectQueue[8];
+    LONG DisconnectQueueHead;
+    LONG DisconnectQueueTail;
 } MTK_DEVICE, *PMTK_DEVICE;
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(MTK_DEVICE, MtkGetDeviceContext);

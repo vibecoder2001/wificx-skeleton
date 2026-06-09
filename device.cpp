@@ -11,6 +11,8 @@
 EVT_WDF_WORKITEM EvtScanCompleteWorkItem;
 EVT_WDF_WORKITEM EvtResetCompleteWorkItem;
 EVT_WDF_WORKITEM EvtRadioStatusWorkItem;
+EVT_WDF_WORKITEM EvtConnectCompleteWorkItem;
+EVT_WDF_WORKITEM EvtDisconnectCompleteWorkItem;
 
 NTSTATUS
 MtkInitializeHardware(
@@ -187,6 +189,18 @@ MtkInitializeHardware(
     wiAttr.ParentObject = pDevice->FxDevice;
     GOTO_IF_NOT_NT_SUCCESS(Exit, status,
         WdfWorkItemCreate(&wiConfig, &wiAttr, &pDevice->RadioStatusWorkItem));
+
+    WDF_WORKITEM_CONFIG_INIT(&wiConfig, EvtConnectCompleteWorkItem);
+    WDF_OBJECT_ATTRIBUTES_INIT(&wiAttr);
+    wiAttr.ParentObject = pDevice->FxDevice;
+    GOTO_IF_NOT_NT_SUCCESS(Exit, status,
+        WdfWorkItemCreate(&wiConfig, &wiAttr, &pDevice->ConnectCompleteWorkItem));
+
+    WDF_WORKITEM_CONFIG_INIT(&wiConfig, EvtDisconnectCompleteWorkItem);
+    WDF_OBJECT_ATTRIBUTES_INIT(&wiAttr);
+    wiAttr.ParentObject = pDevice->FxDevice;
+    GOTO_IF_NOT_NT_SUCCESS(Exit, status,
+        WdfWorkItemCreate(&wiConfig, &wiAttr, &pDevice->DisconnectCompleteWorkItem));
 
     // Radio defaults to ON so the initial SET_RADIO_STATE(TRUE) during
     // adapter bringup is a no-op transition and skips the indication.
@@ -380,5 +394,72 @@ EvtRadioStatusWorkItem(
         }
 
         InterlockedIncrement(&dev->RadioQueueHead);
+    }
+}
+
+_Use_decl_annotations_
+void
+EvtConnectCompleteWorkItem(_In_ WDFWORKITEM WorkItem)
+{
+    WDFDEVICE wdfDevice = (WDFDEVICE)WdfWorkItemGetParentObject(WorkItem);
+    MTK_DEVICE* dev = MtkGetDeviceContext(wdfDevice);
+
+    while (dev->ConnectQueueHead != dev->ConnectQueueTail) {
+        UINT idx = dev->ConnectQueueHead & 0x7;
+        UINT16 portId = dev->ConnectQueue[idx].PortId;
+        UINT32 txnId  = dev->ConnectQueue[idx].TxnId;
+        WDI_CONNECT_TARGET target = dev->ConnectQueue[idx].Target;
+
+        // Park identity so WdiEmitAssociationResult finds the right port.
+        dev->ConnectPortId = portId;
+        dev->ConnectTxnId  = txnId;
+
+        NTSTATUS cs = STATUS_DEVICE_NOT_READY;
+        if (dev->ChipOps && dev->ChipOps->Connect) {
+            cs = dev->ChipOps->Connect(wdfDevice, dev->ChipCtx, &target);
+        }
+
+        TraceLoggingWrite(WiFiCxSampleTraceProvider, "ConnectCompleteFiring",
+            TraceLoggingUInt16(portId, "PortId"),
+            TraceLoggingUInt32(txnId, "Txn"),
+            TraceLoggingHexUInt32((UINT32)cs, "ChipStatus"));
+
+        // CONNECT_COMPLETE is the task-completion indication. Matching
+        // TxnId so the OS Task machinery completes the CONNECT Task.
+        // We always fire it (success or failure); the ASSOCIATION_RESULT
+        // indication that the chip backend emitted on success carries
+        // the actual outcome.
+        (void)WdiIndicateTaskComplete(wdfDevice,
+            WDI_INDICATION_CONNECT_COMPLETE, portId, txnId);
+
+        InterlockedIncrement(&dev->ConnectQueueHead);
+    }
+}
+
+_Use_decl_annotations_
+void
+EvtDisconnectCompleteWorkItem(_In_ WDFWORKITEM WorkItem)
+{
+    WDFDEVICE wdfDevice = (WDFDEVICE)WdfWorkItemGetParentObject(WorkItem);
+    MTK_DEVICE* dev = MtkGetDeviceContext(wdfDevice);
+
+    while (dev->DisconnectQueueHead != dev->DisconnectQueueTail) {
+        UINT idx = dev->DisconnectQueueHead & 0x7;
+        UINT16 portId = dev->DisconnectQueue[idx].PortId;
+        UINT32 txnId  = dev->DisconnectQueue[idx].TxnId;
+
+        if (dev->ChipOps && dev->ChipOps->Disconnect) {
+            (void)dev->ChipOps->Disconnect(wdfDevice, dev->ChipCtx);
+        }
+
+        (void)WdiIndicateTaskComplete(wdfDevice,
+            WDI_INDICATION_DISCONNECT_COMPLETE, portId, txnId);
+
+        // Clear connection identity so a subsequent emit can't accidentally
+        // address a stale port.
+        dev->ConnectPortId = 0;
+        dev->ConnectTxnId  = 0;
+
+        InterlockedIncrement(&dev->DisconnectQueueHead);
     }
 }

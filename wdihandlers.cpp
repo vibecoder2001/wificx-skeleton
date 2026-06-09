@@ -60,6 +60,10 @@ static NTSTATUS HandleGetStatistics(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSA
                                     UINT inLen, UINT outLen, _Out_ UINT* bytesWritten);
 static NTSTATUS HandleSetLocationPrivacy(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
                                          UINT inLen, UINT outLen, _Out_ UINT* bytesWritten);
+static NTSTATUS HandleTaskConnect(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
+                                  UINT inLen, UINT outLen, _Out_ UINT* bytesWritten);
+static NTSTATUS HandleTaskDisconnect(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
+                                     UINT outLen, _Out_ UINT* bytesWritten);
 
 void
 WdiDispatchCommand(
@@ -102,6 +106,10 @@ WdiDispatchCommand(
         status = HandleGetStatistics(dev, Request, hdr, inLen, outLen, &bytesWritten); break;
     case WDI_SET_LOCATION_PRIVACY:
         status = HandleSetLocationPrivacy(dev, Request, hdr, inLen, outLen, &bytesWritten); break;
+    case WDI_TASK_CONNECT:
+        status = HandleTaskConnect(dev, Request, hdr, inLen, outLen, &bytesWritten); break;
+    case WDI_TASK_DISCONNECT:
+        status = HandleTaskDisconnect(dev, Request, hdr, outLen, &bytesWritten); break;
     default:
         DbgPrint("WDI: unhandled MessageID 0x%x (in=%u out=%u)\n", messageId, inLen, outLen);
         break;
@@ -260,6 +268,105 @@ static NTSTATUS HandleGetStatistics(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSA
     *bw = bufLen;
     FreeGenerated(genBuf);
     return STATUS_SUCCESS;
+}
+
+// ---------- connect / disconnect ----------
+
+static NTSTATUS
+HandleTaskConnect(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
+                  UINT inLen, UINT outLen, UINT* bw)
+{
+    TraceLoggingWrite(WiFiCxSampleTraceProvider, "TaskConnect",
+        TraceLoggingUInt16(hdr->PortId, "PortId"),
+        TraceLoggingUInt32(hdr->TransactionId, "Txn"),
+        TraceLoggingUInt32(inLen, "inLen"));
+
+    if (!dev->RadioOn) {
+        *bw = WriteWdiResponseHeader(req, hdr, outLen);
+        return *bw ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL;
+    }
+
+    WDI_CONNECT_TARGET target;
+    RtlZeroMemory(&target, sizeof(target));
+    target.Channel = 0;
+    target.SsidLen = 0;
+    target.UseRsn  = FALSE;
+
+    ULONG tlvLen = 0;
+    const UINT8* tlv = WdiTlvBody(hdr, inLen, &tlvLen);
+    if (tlv) {
+        WDI_TASK_CONNECT_PARAMETERS cp;
+        TLV_CONTEXT ctx = WdiTlvContext(dev->OsWdiVersion);
+        NDIS_STATUS ps = ParseWdiTaskConnectToIhv(tlvLen, tlv, &ctx, &cp);
+        if (ps == NDIS_STATUS_SUCCESS) {
+            if (cp.PreferredBSSEntryList.ElementCount > 0 &&
+                cp.PreferredBSSEntryList.pElements != nullptr) {
+                const WDI_CONNECT_BSS_ENTRY_CONTAINER* be =
+                    &cp.PreferredBSSEntryList.pElements[0];
+                RtlCopyMemory(target.Bssid, be->BSSID.Address, 6);
+                target.Channel = (UCHAR)be->ChannelInfo.ChannelNumber;
+            }
+            if (cp.ConnectParameters.SSIDList.ElementCount > 0 &&
+                cp.ConnectParameters.SSIDList.pElements != nullptr) {
+                const WDI_SSID* s = &cp.ConnectParameters.SSIDList.pElements[0];
+                if (s->pElements != nullptr &&
+                    s->ElementCount >= 1 && s->ElementCount <= 32) {
+                    target.SsidLen = (UCHAR)s->ElementCount;
+                    RtlCopyMemory(target.Ssid, s->pElements, s->ElementCount);
+                }
+            }
+            for (UINT32 ai = 0;
+                 ai < cp.ConnectParameters.AuthenticationAlgorithms.ElementCount;
+                 ai++) {
+                WDI_AUTH_ALGORITHM a =
+                    cp.ConnectParameters.AuthenticationAlgorithms.pElements[ai];
+                if (a == WDI_AUTH_ALGO_RSNA_PSK || a == WDI_AUTH_ALGO_RSNA) {
+                    target.UseRsn = TRUE;
+                    break;
+                }
+            }
+            CleanupParsedWdiTaskConnectToIhv(&cp);
+        }
+    }
+
+    // Queue the task. Workitem fires ASSOCIATION_RESULT (chip side)
+    // and CONNECT_COMPLETE (WDI side) on the way out.
+    LONG slot = InterlockedIncrement(&dev->ConnectQueueTail) - 1;
+    if (slot - dev->ConnectQueueHead < 8) {
+        UINT idx = slot & 0x7;
+        dev->ConnectQueue[idx].PortId = hdr->PortId;
+        dev->ConnectQueue[idx].TxnId  = hdr->TransactionId;
+        dev->ConnectQueue[idx].Target = target;
+        WdfWorkItemEnqueue(dev->ConnectCompleteWorkItem);
+    } else {
+        InterlockedDecrement(&dev->ConnectQueueTail);
+        DbgPrint("MTK: CONNECT queue full, dropping\n");
+    }
+
+    *bw = WriteWdiResponseHeader(req, hdr, outLen);
+    return *bw ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL;
+}
+
+static NTSTATUS
+HandleTaskDisconnect(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
+                     UINT outLen, UINT* bw)
+{
+    TraceLoggingWrite(WiFiCxSampleTraceProvider, "TaskDisconnect",
+        TraceLoggingUInt16(hdr->PortId, "PortId"),
+        TraceLoggingUInt32(hdr->TransactionId, "Txn"));
+
+    LONG slot = InterlockedIncrement(&dev->DisconnectQueueTail) - 1;
+    if (slot - dev->DisconnectQueueHead < 8) {
+        UINT idx = slot & 0x7;
+        dev->DisconnectQueue[idx].PortId = hdr->PortId;
+        dev->DisconnectQueue[idx].TxnId  = hdr->TransactionId;
+        WdfWorkItemEnqueue(dev->DisconnectCompleteWorkItem);
+    } else {
+        InterlockedDecrement(&dev->DisconnectQueueTail);
+    }
+
+    *bw = WriteWdiResponseHeader(req, hdr, outLen);
+    return *bw ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL;
 }
 
 // WDI_SET_LOCATION_PRIVACY (0x8A = 138) — sync ack.

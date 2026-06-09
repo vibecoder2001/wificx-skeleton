@@ -22,6 +22,11 @@
 // would stash its dev/MCU/H2C handle here.
 typedef void* WDI_CHIP_CTX;
 
+// Forward decl — full definition in wdi_connect.h. Avoids a circular
+// include: wdi_connect.h needs WDI_CHIP_OPS for backend declarations
+// in skeleton consumers, and the chip op signature needs the target.
+struct _WDI_CONNECT_TARGET;
+
 typedef struct _WDI_CHIP_OPS {
     //
     // Lifecycle.
@@ -63,4 +68,32 @@ typedef struct _WDI_CHIP_OPS {
     //
     NTSTATUS (*StartScan)(_In_ WDFDEVICE WdfDevice, _In_opt_ WDI_CHIP_CTX Ctx);
     NTSTATUS (*AbortScan)(_In_ WDFDEVICE WdfDevice, _In_opt_ WDI_CHIP_CTX Ctx);
+
+    //
+    // Connect / Disconnect.
+    //
+    // Connect runs on the connect workitem at PASSIVE_LEVEL. The
+    // backend should:
+    //   1. Do its chip-specific work (auth + assoc on air, or a
+    //      synthetic success for the fake backend).
+    //   2. Emit WDI_INDICATION_ASSOCIATION_RESULT via
+    //      WdiEmitAssociationResult(), supplying the AssocReq and
+    //      AssocResp MMPDU bodies. See wdi_mmpdu.h for the strict
+    //      body-vs-frame contract — getting it wrong silently
+    //      breaks RSNA. Use WdiEmitAssociationResult and never
+    //      assign Association{Req,Resp}Frame fields by hand.
+    //   3. Return STATUS_SUCCESS. The WDI workitem will fire
+    //      WDI_INDICATION_CONNECT_COMPLETE after this returns.
+    //
+    // On failure, return non-success; the workitem emits
+    // CONNECT_COMPLETE with a failure status.
+    //
+    // Disconnect: tear down the chip's association. The WDI
+    // workitem fires DISCONNECT_COMPLETE on return.
+    //
+    NTSTATUS (*Connect)(_In_ WDFDEVICE WdfDevice,
+                        _In_opt_ WDI_CHIP_CTX Ctx,
+                        _In_ const struct _WDI_CONNECT_TARGET* Target);
+    NTSTATUS (*Disconnect)(_In_ WDFDEVICE WdfDevice,
+                           _In_opt_ WDI_CHIP_CTX Ctx);
 } WDI_CHIP_OPS;
