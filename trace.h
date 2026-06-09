@@ -102,3 +102,29 @@ TRACELOGGING_DECLARE_PROVIDER(WiFiCxSampleTraceProvider);
 
 #define GOTO_WITH_INSUFFICIENT_RESOURCES_IF_NULL(Label, StatusLValue, Object) \
     GOTO_IF_NOT_NT_SUCCESS(Label, StatusLValue, (((Object) == NULL) ? STATUS_INSUFFICIENT_RESOURCES : STATUS_SUCCESS))
+
+//
+// FwDebug — for surfacing the chip backend's firmware debug stream
+// through ETW. Reserve the convention now even though the fake
+// backend emits nothing; real chips (mt7921 has `fw_debug` debugfs,
+// rtw89 has an H2C trace, etc.) should route their per-message FW
+// strings here so kd / WPP listeners pick them up uniformly.
+//
+// Usage from a chip backend:
+//   WdiFwDebug("scan_done channels=%u rssi_min=%d", n, min);
+//   WdiFwDebugBytes(fwMsgBuf, fwMsgLen);
+//
+#define WdiFwDebug(_format, ...) \
+    TraceLoggingWrite( \
+        WiFiCxSampleTraceProvider, \
+        "FwDebug", \
+        TraceLoggingLevel(TRACE_LEVEL_INFORMATION), \
+        TraceLoggingString((_format), "Message"), \
+        __VA_ARGS__)
+
+#define WdiFwDebugBytes(_buf, _len) \
+    TraceLoggingWrite( \
+        WiFiCxSampleTraceProvider, \
+        "FwDebugBytes", \
+        TraceLoggingLevel(TRACE_LEVEL_INFORMATION), \
+        TraceLoggingBinary((_buf), (_len), "Bytes"))
