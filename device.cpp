@@ -49,6 +49,23 @@ MtkInitializeHardware(
         WifiDeviceSetDeviceCapabilities(pDevice->FxDevice, &deviceCapabilities));
     DbgPrint("MTK: WifiDeviceSetDeviceCapabilities OK\n");
 
+    // Advertise both Open (no encryption) and WPA2-PSK/CCMP so the
+    // OS treats RSN-protected networks as selectable. Without this
+    // wlansvc marks WPA2 BSSes as "not supported" in the UI.
+    static DOT11_AUTH_CIPHER_PAIR unicastPairs[] = {
+        { DOT11_AUTH_ALGO_80211_OPEN, DOT11_CIPHER_ALGO_NONE },
+        { DOT11_AUTH_ALGO_RSNA_PSK,   DOT11_CIPHER_ALGO_CCMP },
+    };
+    static DOT11_AUTH_CIPHER_PAIR mcastDataPairs[] = {
+        { DOT11_AUTH_ALGO_80211_OPEN, DOT11_CIPHER_ALGO_NONE },
+        { DOT11_AUTH_ALGO_RSNA_PSK,   DOT11_CIPHER_ALGO_CCMP },
+    };
+    static DOT11_AUTH_CIPHER_PAIR mcastMgmtPairs[] = {
+        { DOT11_AUTH_ALGO_80211_OPEN, DOT11_CIPHER_ALGO_NONE },
+    };
+
+    // Single cipherPairs kept for WiFi-Direct capabilities below
+    // (P2P here is Open-only — extend if you need WPA2-PSK over WFD).
     static DOT11_AUTH_CIPHER_PAIR cipherPairs;
     cipherPairs.AuthAlgoId = DOT11_AUTH_ALGO_80211_OPEN;
     cipherPairs.CipherAlgoId = DOT11_CIPHER_ALGO_NONE;
@@ -62,12 +79,12 @@ MtkInitializeHardware(
     stationCapabilities.DefaultKeyTableSize = 16;
     stationCapabilities.WEPKeyValueMaxLength = 16;
     stationCapabilities.MaxNumPerSTA = 16;
-    stationCapabilities.NumSupportedUnicastAlgorithms = 1;
-    stationCapabilities.UnicastAlgorithmsList = &cipherPairs;
-    stationCapabilities.NumSupportedMulticastDataAlgorithms = 1;
-    stationCapabilities.MulticastDataAlgorithmsList = &cipherPairs;
-    stationCapabilities.NumSupportedMulticastMgmtAlgorithms = 1;
-    stationCapabilities.MulticastMgmtAlgorithmsList = &cipherPairs;
+    stationCapabilities.NumSupportedUnicastAlgorithms = ARRAYSIZE(unicastPairs);
+    stationCapabilities.UnicastAlgorithmsList = unicastPairs;
+    stationCapabilities.NumSupportedMulticastDataAlgorithms = ARRAYSIZE(mcastDataPairs);
+    stationCapabilities.MulticastDataAlgorithmsList = mcastDataPairs;
+    stationCapabilities.NumSupportedMulticastMgmtAlgorithms = ARRAYSIZE(mcastMgmtPairs);
+    stationCapabilities.MulticastMgmtAlgorithmsList = mcastMgmtPairs;
     GOTO_IF_NOT_NT_SUCCESS(Exit, status,
         WifiDeviceSetStationCapabilities(pDevice->FxDevice, &stationCapabilities));
     DbgPrint("MTK: WifiDeviceSetStationCapabilities OK\n");
