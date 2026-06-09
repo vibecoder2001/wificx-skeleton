@@ -354,9 +354,18 @@ EvtResetCompleteWorkItem(
         UINT idx = dev->ResetQueueHead & 0xF;
         UINT16 portId = dev->ResetQueue[idx].PortId;
         UINT32 txnId  = dev->ResetQueue[idx].TxnId;
+        // Run the chip's reset first, then fire RESET_COMPLETE. The
+        // OS treats the adapter as freshly available once it sees
+        // the indication and re-pushes any state it expects to
+        // persist (connect, keys, etc.).
+        NTSTATUS rs = STATUS_SUCCESS;
+        if (dev->ChipOps && dev->ChipOps->Reset) {
+            rs = dev->ChipOps->Reset(wdfDevice, dev->ChipCtx);
+        }
         TraceLoggingWrite(WiFiCxSampleTraceProvider, "ResetCompleteFiring",
             TraceLoggingUInt16(portId, "PortId"),
-            TraceLoggingUInt32(txnId, "Txn"));
+            TraceLoggingUInt32(txnId, "Txn"),
+            TraceLoggingHexUInt32((UINT32)rs, "ChipStatus"));
 
         if (!NT_SUCCESS(WdiIndicateTaskComplete(
                 wdfDevice, WDI_INDICATION_DOT11_RESET_COMPLETE,

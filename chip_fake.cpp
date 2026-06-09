@@ -254,6 +254,20 @@ FakeSetDefaultKeyId(_In_ WDFDEVICE /*WdfDevice*/, _In_opt_ WDI_CHIP_CTX /*Ctx*/,
     return STATUS_SUCCESS;
 }
 
+static volatile LONG g_FakeResetCount = 0;
+
+static NTSTATUS
+FakeReset(_In_ WDFDEVICE /*WdfDevice*/, _In_opt_ WDI_CHIP_CTX /*Ctx*/)
+{
+    // A real backend would reset its HW here. The fake counts.
+    // Also drop any "chip-internal" state we hold so the post-reset
+    // adapter starts clean (matches what a real chip would do).
+    InterlockedIncrement(&g_FakeResetCount);
+    RtlZeroMemory(g_FakeKeys, sizeof(g_FakeKeys));
+    g_FakeDefaultKeyId = 0;
+    return STATUS_SUCCESS;
+}
+
 static const WDI_CHIP_OPS g_FakeOps = {
     FakeInit,
     FakeDeinit,
@@ -265,6 +279,7 @@ static const WDI_CHIP_OPS g_FakeOps = {
     FakeProgramKey,
     FakeRemoveAllKeys,
     FakeSetDefaultKeyId,
+    FakeReset,
 };
 
 const WDI_CHIP_OPS*

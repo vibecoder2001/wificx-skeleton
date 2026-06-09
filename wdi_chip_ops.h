@@ -125,4 +125,22 @@ typedef struct _WDI_CHIP_OPS {
     NTSTATUS (*SetDefaultKeyId)(_In_ WDFDEVICE WdfDevice,
                                 _In_opt_ WDI_CHIP_CTX Ctx,
                                 _In_ UCHAR KeyIndex);
+
+    //
+    // Reset / recovery.
+    //
+    // Called from the DOT11_RESET workitem before the WDI layer
+    // emits DOT11_RESET_COMPLETE. Real backends re-initialize their
+    // chip (FW reload, MAC reset, ring reset). On return success the
+    // WDI layer fires RESET_COMPLETE and the OS treats the adapter
+    // as freshly available; wlansvc will re-issue any state it
+    // expects to persist (connect, keys, etc.).
+    //
+    // The skeleton intentionally does NOT cache OS-pushed state to
+    // re-apply across resets — wlansvc re-pushes everything once it
+    // sees RESET_COMPLETE. Real backends that need to restore *chip-
+    // internal* state (cal tables, FW config) handle it here.
+    //
+    NTSTATUS (*Reset)(_In_ WDFDEVICE WdfDevice,
+                      _In_opt_ WDI_CHIP_CTX Ctx);
 } WDI_CHIP_OPS;
