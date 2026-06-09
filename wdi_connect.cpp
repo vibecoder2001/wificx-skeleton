@@ -47,7 +47,10 @@ WdiEmitAssociationResult(
     entry->AssociationResultParameters.UnicastCipherAlgorithm = WDI_CIPHER_ALGO_NONE;
     entry->AssociationResultParameters.MulticastDataCipherAlgorithm = WDI_CIPHER_ALGO_NONE;
     entry->AssociationResultParameters.MulticastMgmtCipherAlgorithm = WDI_CIPHER_ALGO_NONE;
-    entry->AssociationResultParameters.PortAuthorized = TRUE;
+    // PortAuthorized=FALSE on failure or RSNA-pending. For Open BSS
+    // success a real backend would set this TRUE.
+    entry->AssociationResultParameters.PortAuthorized =
+        (StatusCode == 0) ? TRUE : FALSE;
     entry->AssociationResultParameters.BandID = WDI_BAND_ID_2400;
     entry->AssociationResultParameters.WMMQoSEnabled = FALSE;
 

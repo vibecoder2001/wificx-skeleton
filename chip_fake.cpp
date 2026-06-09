@@ -166,11 +166,17 @@ FakeConnect(_In_ WDFDEVICE WdfDevice, _In_opt_ WDI_CHIP_CTX /*Ctx*/,
                                            /*aid*/ 1);
     if (!reqLen || !respLen) return STATUS_INSUFFICIENT_RESOURCES;
 
+    // Fake backend reports the association as FAILED. We still emit
+    // the indication so the path is exercised end-to-end (including
+    // the MMPDU-body contract), but a non-zero StatusCode keeps the
+    // OS from pushing DHCP through the not-implemented TX queue.
+    // Real backends override this and emit success when they actually
+    // associate.
     WdiEmitAssociationResult(WdfDevice,
                              bss->Bssid,
                              reqBody,  reqLen,
                              respBody, respLen,
-                             /*StatusCode*/ 0);
+                             /*StatusCode*/ 1 /* unspecified failure */);
     return STATUS_SUCCESS;
 }
 

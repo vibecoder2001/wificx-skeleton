@@ -60,6 +60,7 @@ static NTSTATUS HandleGetStatistics(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSA
                                     UINT inLen, UINT outLen, _Out_ UINT* bytesWritten);
 static NTSTATUS HandleSetLocationPrivacy(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
                                          UINT inLen, UINT outLen, _Out_ UINT* bytesWritten);
+static UINT WriteWdiResponseHeader(WIFIREQUEST req, PWDI_MESSAGE_HEADER in, UINT outLen);
 static NTSTATUS HandleTaskConnect(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
                                   UINT inLen, UINT outLen, _Out_ UINT* bytesWritten);
 static NTSTATUS HandleTaskDisconnect(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
@@ -110,6 +111,22 @@ WdiDispatchCommand(
         status = HandleTaskConnect(dev, Request, hdr, inLen, outLen, &bytesWritten); break;
     case WDI_TASK_DISCONNECT:
         status = HandleTaskDisconnect(dev, Request, hdr, outLen, &bytesWritten); break;
+
+    // Pre-connect setup messages. wlansvc treats NOT_IMPLEMENTED as
+    // fatal and tears the adapter down. Until Phase 5 adds real key
+    // management, sync-ack these so the connect flow can proceed and
+    // the dispatch loop stays alive.
+    case WDI_SET_PRIVACY_EXEMPTION_LIST:
+    case WDI_SET_ADD_CIPHER_KEYS:
+    case WDI_SET_DELETE_CIPHER_KEYS:
+    case WDI_SET_DEFAULT_KEY_ID:
+    case WDI_SET_MULTICAST_LIST:
+    case WDI_SET_OPERATION_MODE:
+    case WDI_ABORT_TASK:
+        bytesWritten = WriteWdiResponseHeader(Request, hdr, outLen);
+        status = bytesWritten ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL;
+        break;
+
     default:
         DbgPrint("WDI: unhandled MessageID 0x%x (in=%u out=%u)\n", messageId, inLen, outLen);
         break;
