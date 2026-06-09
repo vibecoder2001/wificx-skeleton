@@ -6,6 +6,7 @@
 #include "wdihandlers.h"
 #include "wdi_frame.h"
 #include "wdi_scan_cache.h"
+#include "wdi_tlv.h"
 
 // The TLV generator (WificxTLVGenParse.lib) and its ArrayOfElements<T>
 // templates call standard C++ new/delete. Kernel mode has no CRT, so
@@ -412,7 +413,7 @@ WdiEmitBssEntryList(_In_ WDFDEVICE WdfDevice)
     params.DeviceDescriptor.SimpleAssign(entries, (UINT32)rawCount);
     params.Optional.DeviceDescriptor_IsPresent = TRUE;
 
-    TLV_CONTEXT ctx = { 0, dev->OsWdiVersion ? dev->OsWdiVersion : WDI_VERSION_LATEST };
+    TLV_CONTEXT ctx = WdiTlvContext(dev->OsWdiVersion);
     ULONG bufLen = 0;
     UINT8* genBuf = NULL;
     NDIS_STATUS gs = GenerateWdiIndicationBssEntryListFromIhv(
@@ -425,43 +426,18 @@ WdiEmitBssEntryList(_In_ WDFDEVICE WdfDevice)
         TraceLoggingHexUInt32(gs, "gs"),
         TraceLoggingUInt32(bufLen, "bufLen"),
         TraceLoggingUInt32((UINT32)rawCount, "rawCount"));
-    if (gs != NDIS_STATUS_SUCCESS || genBuf == NULL || bufLen < sizeof(WDI_MESSAGE_HEADER)) {
+
+    if (gs == NDIS_STATUS_SUCCESS && genBuf != NULL) {
+        // Unsolicited — TxnId=0 routes to CPort BSS-ingest path
+        // instead of being hijacked by the outstanding SCAN Task.
+        (void)WdiIndicateTlv(WdfDevice, WDI_INDICATION_BSS_ENTRY_LIST,
+                             dev->ActiveScanPortId, 0,
+                             &genBuf, bufLen);
+    } else {
         DbgPrint("MTK: GenerateWdiIndicationBssEntryListFromIhv failed 0x%x\n", gs);
         if (genBuf) FreeGenerated(genBuf);
-        ExFreePool(entries);
-        ExFreePool(snap);
-        return;
     }
 
-    PWDI_MESSAGE_HEADER hdr = (PWDI_MESSAGE_HEADER)genBuf;
-    RtlZeroMemory(hdr, sizeof(*hdr));
-    hdr->PortId = dev->ActiveScanPortId;
-    // CRITICAL: TransactionId MUST be 0 (unsolicited) on BSS_ENTRY_LIST.
-    // Per Task::OnDeviceIndicationArrived disasm: a matching TxnId+PortId
-    // causes the SCAN Task to treat THIS indication as its completion and
-    // discard the BSS payload. Use 0 so it falls through to the
-    // CPort::OnDeviceIndicationArrived BSS-ingest path instead.
-    hdr->TransactionId = 0;
-    hdr->Status = STATUS_SUCCESS;
-
-    WDFMEMORY memory = NULL;
-    PVOID memBuf = NULL;
-    NTSTATUS ns = WdfMemoryCreate(
-        WDF_NO_OBJECT_ATTRIBUTES,
-        NonPagedPoolNx,
-        'IFiW',
-        bufLen,
-        &memory,
-        &memBuf);
-    if (NT_SUCCESS(ns)) {
-        RtlCopyMemory(memBuf, genBuf, bufLen);
-        WifiDeviceReceiveIndication(WdfDevice, WDI_INDICATION_BSS_ENTRY_LIST, memory);
-        WdfObjectDelete(memory);
-    } else {
-        DbgPrint("MTK: WdfMemoryCreate for BSS list failed 0x%x\n", ns);
-    }
-
-    FreeGenerated(genBuf);
     ExFreePool(entries);
     ExFreePool(snap);
 }

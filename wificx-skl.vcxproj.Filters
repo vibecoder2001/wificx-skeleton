@@ -62,6 +62,9 @@
     <ClCompile Include="wdi_scan_cache.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="wdi_tlv.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="wdihandlers.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -89,6 +92,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="wdi_scan_cache.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="wdi_tlv.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="forward.h">

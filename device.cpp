@@ -6,6 +6,7 @@
 #include "adapter.h"
 #include "wdihandlers.h"
 #include "chip_fake.h"
+#include "wdi_tlv.h"
 
 EVT_WDF_WORKITEM EvtScanCompleteWorkItem;
 EVT_WDF_WORKITEM EvtResetCompleteWorkItem;
@@ -294,23 +295,11 @@ EvtScanCompleteWorkItem(
         // into the list manager while the Task is outstanding.
         WdiEmitBssEntryList(wdfDevice);
 
-        WDFMEMORY memory = NULL;
-        PWDI_MESSAGE_HEADER hdr = NULL;
-        NTSTATUS status = WdfMemoryCreate(
-            WDF_NO_OBJECT_ATTRIBUTES,
-            NonPagedPoolNx,
-            'IFiW',
-            sizeof(WDI_MESSAGE_HEADER),
-            &memory,
-            (PVOID*)&hdr);
-        if (!NT_SUCCESS(status)) break;
-
-        RtlZeroMemory(hdr, sizeof(*hdr));
-        hdr->PortId = portId;
-        hdr->TransactionId = txnId;
-        hdr->Status = STATUS_SUCCESS;
-        WifiDeviceReceiveIndication(wdfDevice, WDI_INDICATION_SCAN_COMPLETE, memory);
-        WdfObjectDelete(memory);
+        // Task-completion indication: TxnId matches the SCAN Task.
+        if (!NT_SUCCESS(WdiIndicateTaskComplete(
+                wdfDevice, WDI_INDICATION_SCAN_COMPLETE, portId, txnId))) {
+            break;
+        }
 
         if (req != NULL) {
             WifiRequestComplete(req, STATUS_SUCCESS, sizeof(WDI_MESSAGE_HEADER));
@@ -338,23 +327,11 @@ EvtResetCompleteWorkItem(
             TraceLoggingUInt16(portId, "PortId"),
             TraceLoggingUInt32(txnId, "Txn"));
 
-        WDFMEMORY memory = NULL;
-        PWDI_MESSAGE_HEADER hdr = NULL;
-        NTSTATUS status = WdfMemoryCreate(
-            WDF_NO_OBJECT_ATTRIBUTES,
-            NonPagedPoolNx,
-            'IFiW',
-            sizeof(WDI_MESSAGE_HEADER),
-            &memory,
-            (PVOID*)&hdr);
-        if (!NT_SUCCESS(status)) break;
-
-        RtlZeroMemory(hdr, sizeof(*hdr));
-        hdr->PortId = portId;
-        hdr->TransactionId = txnId;
-        hdr->Status = STATUS_SUCCESS;
-        WifiDeviceReceiveIndication(wdfDevice, WDI_INDICATION_DOT11_RESET_COMPLETE, memory);
-        WdfObjectDelete(memory);
+        if (!NT_SUCCESS(WdiIndicateTaskComplete(
+                wdfDevice, WDI_INDICATION_DOT11_RESET_COMPLETE,
+                portId, txnId))) {
+            break;
+        }
 
         InterlockedIncrement(&dev->ResetQueueHead);
     }
@@ -379,57 +356,28 @@ EvtRadioStatusWorkItem(
             TraceLoggingUInt32(txnId, "Txn"),
             TraceLoggingUInt8(softOn, "SoftOn"));
 
-        // 1) Fire WDI_INDICATION_SET_RADIO_STATE_COMPLETE (id 22, header-only)
-        //    with matching TxnId+PortId so Task::OnDeviceIndicationArrived
-        //    completes the outstanding SET_RADIO_STATE Task.
-        {
-            WDFMEMORY mem = NULL;
-            PWDI_MESSAGE_HEADER hdr = NULL;
-            NTSTATUS ms = WdfMemoryCreate(
-                WDF_NO_OBJECT_ATTRIBUTES, NonPagedPoolNx, 'IFiW',
-                sizeof(WDI_MESSAGE_HEADER), &mem, (PVOID*)&hdr);
-            if (NT_SUCCESS(ms)) {
-                RtlZeroMemory(hdr, sizeof(*hdr));
-                hdr->PortId = portId;
-                hdr->TransactionId = txnId;
-                hdr->Status = STATUS_SUCCESS;
-                WifiDeviceReceiveIndication(wdfDevice,
-                    WDI_INDICATION_SET_RADIO_STATE_COMPLETE, mem);
-                WdfObjectDelete(mem);
-            }
-        }
+        // 1) Task-completion indication for the SET_RADIO_STATE Task.
+        (void)WdiIndicateTaskComplete(
+            wdfDevice, WDI_INDICATION_SET_RADIO_STATE_COMPLETE,
+            portId, txnId);
 
-        // 2) Fire WDI_INDICATION_RADIO_STATUS (id 67, TLV) UNSOLICITED so the
-        //    OS updates its state tracking. TxnId=0 keeps it from being
-        //    consumed as a Task completion (per the same lesson as BSS_ENTRY_LIST).
+        // 2) Unsolicited RADIO_STATUS push so the OS updates its
+        //    state tracking. PortId=0xFFFF (all-ports), TxnId=0.
         WDI_INDICATION_RADIO_STATUS_PARAMETERS params;
         params.RadioState.HardwareState = TRUE;
         params.RadioState.SoftwareState = softOn;
 
-        TLV_CONTEXT ctx = { 0, dev->OsWdiVersion ? dev->OsWdiVersion : WDI_VERSION_LATEST };
+        TLV_CONTEXT ctx = WdiTlvContext(dev->OsWdiVersion);
         ULONG bufLen = 0;
         UINT8* genBuf = NULL;
         NDIS_STATUS gs = GenerateWdiIndicationRadioStatusFromIhv(
             &params, sizeof(WDI_MESSAGE_HEADER), &ctx, &bufLen, &genBuf);
-        if (gs == NDIS_STATUS_SUCCESS && genBuf != NULL && bufLen >= sizeof(WDI_MESSAGE_HEADER)) {
-            PWDI_MESSAGE_HEADER ih = (PWDI_MESSAGE_HEADER)genBuf;
-            RtlZeroMemory(ih, sizeof(*ih));
-            ih->PortId = 0xFFFF;
-            ih->TransactionId = 0;  // unsolicited
-            ih->Status = STATUS_SUCCESS;
-
-            WDFMEMORY mem2 = NULL;
-            PVOID memBuf = NULL;
-            NTSTATUS ms2 = WdfMemoryCreate(
-                WDF_NO_OBJECT_ATTRIBUTES, NonPagedPoolNx, 'IFiW',
-                bufLen, &mem2, &memBuf);
-            if (NT_SUCCESS(ms2)) {
-                RtlCopyMemory(memBuf, genBuf, bufLen);
-                WifiDeviceReceiveIndication(wdfDevice, WDI_INDICATION_RADIO_STATUS, mem2);
-                WdfObjectDelete(mem2);
-            }
+        if (gs == NDIS_STATUS_SUCCESS && genBuf != NULL) {
+            (void)WdiIndicateTlv(wdfDevice, WDI_INDICATION_RADIO_STATUS,
+                                 0xFFFF, 0, &genBuf, bufLen);
+        } else if (genBuf) {
+            FreeGenerated(genBuf);
         }
-        if (genBuf) FreeGenerated(genBuf);
 
         InterlockedIncrement(&dev->RadioQueueHead);
     }
