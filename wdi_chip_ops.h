@@ -27,6 +27,9 @@ typedef void* WDI_CHIP_CTX;
 // in skeleton consumers, and the chip op signature needs the target.
 struct _WDI_CONNECT_TARGET;
 
+// Forward decl — full definition in wdi_keys.h.
+struct _WDI_KEY_DESCRIPTOR;
+
 typedef struct _WDI_CHIP_OPS {
     //
     // Lifecycle.
@@ -96,4 +99,30 @@ typedef struct _WDI_CHIP_OPS {
                         _In_ const struct _WDI_CONNECT_TARGET* Target);
     NTSTATUS (*Disconnect)(_In_ WDFDEVICE WdfDevice,
                            _In_opt_ WDI_CHIP_CTX Ctx);
+
+    //
+    // Key management. The WDI layer parses the WDI_SET_ADD_CIPHER_
+    // KEYS / DELETE_CIPHER_KEYS / SET_DEFAULT_KEY_ID TLVs and hands
+    // normalized data to these ops.
+    //
+    // ProgramKey: install / update one key. Called for each entry in
+    // an ADD_CIPHER_KEYS batch. Real backends drive the HW security-
+    // CAM (or equivalent) here; the fake backend just records.
+    //
+    // RemoveAllKeys: clear every key the backend is holding. The
+    // WDI DELETE_CIPHER_KEYS TLV can be per-key in principle, but
+    // wlansvc only sends it at disconnect — collapse to "clear all".
+    // Backends that need finer granularity can extend the surface.
+    //
+    // SetDefaultKeyId: which keyid future broadcast/multicast TX
+    // uses. Backends without HW default-key tracking may no-op.
+    //
+    NTSTATUS (*ProgramKey)(_In_ WDFDEVICE WdfDevice,
+                           _In_opt_ WDI_CHIP_CTX Ctx,
+                           _In_ const struct _WDI_KEY_DESCRIPTOR* Key);
+    NTSTATUS (*RemoveAllKeys)(_In_ WDFDEVICE WdfDevice,
+                              _In_opt_ WDI_CHIP_CTX Ctx);
+    NTSTATUS (*SetDefaultKeyId)(_In_ WDFDEVICE WdfDevice,
+                                _In_opt_ WDI_CHIP_CTX Ctx,
+                                _In_ UCHAR KeyIndex);
 } WDI_CHIP_OPS;

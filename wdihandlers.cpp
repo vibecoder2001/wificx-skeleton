@@ -7,6 +7,7 @@
 #include "wdi_frame.h"
 #include "wdi_scan_cache.h"
 #include "wdi_tlv.h"
+#include "wdi_keys.h"
 
 // The TLV generator (WificxTLVGenParse.lib) and its ArrayOfElements<T>
 // templates call standard C++ new/delete. Kernel mode has no CRT, so
@@ -65,6 +66,12 @@ static NTSTATUS HandleTaskConnect(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE
                                   UINT inLen, UINT outLen, _Out_ UINT* bytesWritten);
 static NTSTATUS HandleTaskDisconnect(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
                                      UINT outLen, _Out_ UINT* bytesWritten);
+static NTSTATUS HandleSetAddCipherKeys(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
+                                       UINT inLen, UINT outLen, _Out_ UINT* bytesWritten);
+static NTSTATUS HandleSetDeleteCipherKeys(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
+                                          UINT outLen, _Out_ UINT* bytesWritten);
+static NTSTATUS HandleSetDefaultKeyId(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
+                                      UINT inLen, UINT outLen, _Out_ UINT* bytesWritten);
 
 void
 WdiDispatchCommand(
@@ -112,14 +119,17 @@ WdiDispatchCommand(
     case WDI_TASK_DISCONNECT:
         status = HandleTaskDisconnect(dev, Request, hdr, outLen, &bytesWritten); break;
 
-    // Pre-connect setup messages. wlansvc treats NOT_IMPLEMENTED as
-    // fatal and tears the adapter down. Until Phase 5 adds real key
-    // management, sync-ack these so the connect flow can proceed and
-    // the dispatch loop stays alive.
-    case WDI_SET_PRIVACY_EXEMPTION_LIST:
     case WDI_SET_ADD_CIPHER_KEYS:
+        status = HandleSetAddCipherKeys(dev, Request, hdr, inLen, outLen, &bytesWritten); break;
     case WDI_SET_DELETE_CIPHER_KEYS:
+        status = HandleSetDeleteCipherKeys(dev, Request, hdr, outLen, &bytesWritten); break;
     case WDI_SET_DEFAULT_KEY_ID:
+        status = HandleSetDefaultKeyId(dev, Request, hdr, inLen, outLen, &bytesWritten); break;
+
+    // Pre-connect setup messages we sync-ack: wlansvc treats
+    // NOT_IMPLEMENTED as fatal and tears the adapter down, but our
+    // skeleton doesn't have meaningful semantics for these yet.
+    case WDI_SET_PRIVACY_EXEMPTION_LIST:
     case WDI_SET_MULTICAST_LIST:
     case WDI_SET_OPERATION_MODE:
     case WDI_ABORT_TASK:
@@ -382,6 +392,83 @@ HandleTaskDisconnect(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
         InterlockedDecrement(&dev->DisconnectQueueTail);
     }
 
+    *bw = WriteWdiResponseHeader(req, hdr, outLen);
+    return *bw ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL;
+}
+
+// ---------- cipher keys ----------
+
+static NTSTATUS
+HandleSetAddCipherKeys(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
+                      UINT inLen, UINT outLen, UINT* bw)
+{
+    ULONG tlvLen = 0;
+    const UINT8* tlv = WdiTlvBody(hdr, inLen, &tlvLen);
+    if (tlv && dev->ChipOps && dev->ChipOps->ProgramKey) {
+        WDI_SET_ADD_CIPHER_KEYS_PARAMETERS params;
+        TLV_CONTEXT ctx = WdiTlvContext(dev->OsWdiVersion);
+        NDIS_STATUS ps = ParseWdiSetAddCipherKeysToIhv(tlvLen, tlv, &ctx, &params);
+        if (ps == NDIS_STATUS_SUCCESS) {
+            for (UINT32 i = 0; i < params.SetCipherKey.ElementCount; i++) {
+                WDI_KEY_DESCRIPTOR key;
+                if (!WdiKeyFromContainer(&params.SetCipherKey.pElements[i], &key)) {
+                    continue;
+                }
+                TraceLoggingWrite(WiFiCxSampleTraceProvider, "ProgramKey",
+                    TraceLoggingUInt32(key.Cipher, "Cipher"),
+                    TraceLoggingUInt32(key.Type,   "Type"),
+                    TraceLoggingUInt8 (key.KeyIndex, "Idx"),
+                    TraceLoggingBoolean(key.HasPeer, "HasPeer"),
+                    TraceLoggingUInt8 (key.KeyLength, "KeyLen"));
+                (void)dev->ChipOps->ProgramKey(dev->FxDevice, dev->ChipCtx, &key);
+            }
+            CleanupParsedWdiSetAddCipherKeysToIhv(&params);
+        } else {
+            TraceLoggingWrite(WiFiCxSampleTraceProvider, "ProgramKeyParseFail",
+                TraceLoggingNTStatus(ps, "Status"));
+        }
+    }
+    *bw = WriteWdiResponseHeader(req, hdr, outLen);
+    return *bw ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL;
+}
+
+static NTSTATUS
+HandleSetDeleteCipherKeys(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
+                          UINT outLen, UINT* bw)
+{
+    // The WDI TLV can name specific keys, but wlansvc only sends
+    // this at disconnect — collapse to "clear all" and let real
+    // backends extend the chip-op surface if they need finer grain.
+    TraceLoggingWrite(WiFiCxSampleTraceProvider, "RemoveAllKeys",
+        TraceLoggingUInt16(hdr->PortId, "PortId"));
+    if (dev->ChipOps && dev->ChipOps->RemoveAllKeys) {
+        (void)dev->ChipOps->RemoveAllKeys(dev->FxDevice, dev->ChipCtx);
+    }
+    *bw = WriteWdiResponseHeader(req, hdr, outLen);
+    return *bw ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL;
+}
+
+static NTSTATUS
+HandleSetDefaultKeyId(MTK_DEVICE* dev, WIFIREQUEST req, PWDI_MESSAGE_HEADER hdr,
+                      UINT inLen, UINT outLen, UINT* bw)
+{
+    UCHAR keyId = 0;
+    ULONG tlvLen = 0;
+    const UINT8* tlv = WdiTlvBody(hdr, inLen, &tlvLen);
+    if (tlv) {
+        WDI_SET_DEFAULT_KEY_ID_PARAMETERS params;
+        TLV_CONTEXT ctx = WdiTlvContext(dev->OsWdiVersion);
+        NDIS_STATUS ps = ParseWdiSetDefaultKeyIdToIhv(tlvLen, tlv, &ctx, &params);
+        if (ps == NDIS_STATUS_SUCCESS) {
+            keyId = (UCHAR)params.DefaultKeyIdParameters.KeyID;
+            CleanupParsedWdiSetDefaultKeyIdToIhv(&params);
+        }
+    }
+    TraceLoggingWrite(WiFiCxSampleTraceProvider, "SetDefaultKeyId",
+        TraceLoggingUInt8(keyId, "KeyId"));
+    if (dev->ChipOps && dev->ChipOps->SetDefaultKeyId) {
+        (void)dev->ChipOps->SetDefaultKeyId(dev->FxDevice, dev->ChipCtx, keyId);
+    }
     *bw = WriteWdiResponseHeader(req, hdr, outLen);
     return *bw ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL;
 }

@@ -216,6 +216,7 @@
     <ClInclude Include="wdi_chip_ops.h" />
     <ClInclude Include="wdi_connect.h" />
     <ClInclude Include="wdi_frame.h" />
+    <ClInclude Include="wdi_keys.h" />
     <ClInclude Include="wdi_mmpdu.h" />
     <ClInclude Include="wdi_scan_cache.h" />
     <ClInclude Include="wdi_tlv.h" />
@@ -233,6 +234,7 @@
     <ClCompile Include="txqueue.cpp" />
     <ClCompile Include="wdi_connect.cpp" />
     <ClCompile Include="wdi_frame.cpp" />
+    <ClCompile Include="wdi_keys.cpp" />
     <ClCompile Include="wdi_mmpdu.cpp" />
     <ClCompile Include="wdi_scan_cache.cpp" />
     <ClCompile Include="wdi_tlv.cpp" />

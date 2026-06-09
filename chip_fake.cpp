@@ -5,6 +5,7 @@
 #include "wdi_scan_cache.h"
 #include "wdi_connect.h"
 #include "wdi_frame.h"
+#include "wdi_keys.h"
 
 //
 // Fake chip backend. Implements WDI_CHIP_OPS with synthetic behavior
@@ -186,6 +187,73 @@ FakeDisconnect(_In_ WDFDEVICE /*WdfDevice*/, _In_opt_ WDI_CHIP_CTX /*Ctx*/)
     return STATUS_SUCCESS;
 }
 
+//
+// In-memory key table — what a real chip would program into its
+// HW security-CAM. Small fixed size; collisions overwrite.
+//
+#define FAKE_KEY_TABLE_SIZE 16
+
+struct FakeKeyEntry {
+    BOOLEAN  InUse;
+    UCHAR    PeerAddress[6];
+    UCHAR    KeyIndex;
+    WDI_CIPHER_KEY_TYPE  Type;
+    WDI_CIPHER_ALGORITHM Cipher;
+    UCHAR    KeyLength;
+    UCHAR    Key[32];
+};
+static FakeKeyEntry g_FakeKeys[FAKE_KEY_TABLE_SIZE];
+static UCHAR        g_FakeDefaultKeyId = 0;
+
+static NTSTATUS
+FakeProgramKey(_In_ WDFDEVICE /*WdfDevice*/, _In_opt_ WDI_CHIP_CTX /*Ctx*/,
+               _In_ const WDI_KEY_DESCRIPTOR* Key)
+{
+    // Find an existing slot for (peer, idx, type) — update in place.
+    // Otherwise take the first free slot.
+    int targetIdx = -1;
+    int firstFree = -1;
+    for (int i = 0; i < FAKE_KEY_TABLE_SIZE; ++i) {
+        if (!g_FakeKeys[i].InUse) {
+            if (firstFree < 0) firstFree = i;
+            continue;
+        }
+        if (g_FakeKeys[i].KeyIndex == Key->KeyIndex &&
+            g_FakeKeys[i].Type     == Key->Type &&
+            RtlEqualMemory(g_FakeKeys[i].PeerAddress, Key->PeerAddress, 6)) {
+            targetIdx = i;
+            break;
+        }
+    }
+    if (targetIdx < 0) targetIdx = firstFree;
+    if (targetIdx < 0) return STATUS_INSUFFICIENT_RESOURCES;
+
+    FakeKeyEntry& slot = g_FakeKeys[targetIdx];
+    slot.InUse     = TRUE;
+    slot.KeyIndex  = Key->KeyIndex;
+    slot.Type      = Key->Type;
+    slot.Cipher    = Key->Cipher;
+    slot.KeyLength = Key->KeyLength;
+    RtlCopyMemory(slot.PeerAddress, Key->PeerAddress, 6);
+    RtlCopyMemory(slot.Key,         Key->Key,         Key->KeyLength);
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+FakeRemoveAllKeys(_In_ WDFDEVICE /*WdfDevice*/, _In_opt_ WDI_CHIP_CTX /*Ctx*/)
+{
+    RtlZeroMemory(g_FakeKeys, sizeof(g_FakeKeys));
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+FakeSetDefaultKeyId(_In_ WDFDEVICE /*WdfDevice*/, _In_opt_ WDI_CHIP_CTX /*Ctx*/,
+                    _In_ UCHAR KeyIndex)
+{
+    g_FakeDefaultKeyId = KeyIndex;
+    return STATUS_SUCCESS;
+}
+
 static const WDI_CHIP_OPS g_FakeOps = {
     FakeInit,
     FakeDeinit,
@@ -194,6 +262,9 @@ static const WDI_CHIP_OPS g_FakeOps = {
     FakeAbortScan,
     FakeConnect,
     FakeDisconnect,
+    FakeProgramKey,
+    FakeRemoveAllKeys,
+    FakeSetDefaultKeyId,
 };
 
 const WDI_CHIP_OPS*

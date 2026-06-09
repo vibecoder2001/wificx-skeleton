@@ -62,6 +62,9 @@
     <ClCompile Include="wdi_frame.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="wdi_keys.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="wdi_mmpdu.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -98,6 +101,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="wdi_frame.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="wdi_keys.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="wdi_mmpdu.h">
