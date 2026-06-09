@@ -226,6 +226,33 @@ MtkInitializeHardware(
     pDevice->OsWdiVersion = WifiDeviceGetOsWdiVersion(pDevice->FxDevice);
     DbgPrint("MTK: OS WDI version = 0x%x\n", pDevice->OsWdiVersion);
 
+    // Read pre-wired PM tunables from the driver parameters key.
+    // Defaults match the INF (all off). Real chip backends read these
+    // via their own helper and gate their PM init paths accordingly;
+    // here we just log them so the values are visible in WPP traces
+    // during bring-up.
+    {
+        WDFKEY paramsKey = NULL;
+        if (NT_SUCCESS(WdfDeviceOpenRegistryKey(
+                pDevice->FxDevice, PLUGPLAY_REGKEY_DRIVER,
+                KEY_READ, WDF_NO_OBJECT_ATTRIBUTES, &paramsKey))) {
+            ULONG val = 0;
+            UNICODE_STRING name;
+            #define READ_PARAM(nm) do { \
+                RtlInitUnicodeString(&name, L##nm); \
+                val = 0; \
+                (void)WdfRegistryQueryULong(paramsKey, &name, &val); \
+                DbgPrint("MTK: " nm " = %u\n", val); \
+            } while (0)
+            READ_PARAM("RuntimePmEnable");
+            READ_PARAM("DeepSleepEnable");
+            READ_PARAM("IdleTimeoutMs");
+            READ_PARAM("AspmL1ssEnable");
+            #undef READ_PARAM
+            WdfRegistryClose(paramsKey);
+        }
+    }
+
     // Shared scan cache the chip backend fills and the WDI layer
     // drains. Size 32 is enough for the synthetic backend and gives
     // real backends headroom for a typical home environment.

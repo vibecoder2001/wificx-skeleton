@@ -86,6 +86,23 @@ HKR, Ndi\Interfaces, UpperRange, 0, "ndis5,mdcwifi,wifipro"
 HKR, Ndi\Interfaces, LowerRange, 0, "wlan,ethernet,vwifi"
 HKR, Ndi,            Service,    0, %ServiceName%
 
+; -------------------------------------------------------------------
+; Power-management knobs. ALL DEFAULTS ARE OFF — these are designed
+; to be flipped on case-by-case during bring-up of a real chip
+; backend, once the data path is solid. PM-resume races are the #1
+; class of bug reports on Linux WiFi drivers (mt7921 PM resume,
+; rtw89 ASPM L1.2 hangs, etc.); start conservative and enable
+; selectively. See docs/chip_ops.md for the contract real backends
+; should honor when reading these.
+;   RuntimePmEnable  — let WDF runtime-PM the device
+;   DeepSleepEnable  — allow chip-internal deep-sleep transitions
+;   IdleTimeoutMs    — ms idle before runtime-PM kicks in (0 = never)
+;   AspmL1ssEnable   — PCIe L1 substates (L1.1/L1.2)
+HKR, ,RuntimePmEnable,  0x00010001, 0
+HKR, ,DeepSleepEnable,  0x00010001, 0
+HKR, ,IdleTimeoutMs,    0x00010001, 0
+HKR, ,AspmL1ssEnable,   0x00010001, 0
+
 [wdf]
 KmdfLibraryVersion = $KMDFVERSION$
 
