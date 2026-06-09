@@ -205,7 +205,7 @@
     <ClInclude Include="adapter.h" />
     <ClInclude Include="chip_fake.h" />
     <ClInclude Include="device.h" />
-    <ClInclude Include="fakebss.h" />
+    <ClInclude Include="chip_fake_bss.h" />
     <ClInclude Include="forward.h" />
     <ClInclude Include="power.h" />
     <ClInclude Exclude="@(ClInclude)" Include="precomp.h" />
@@ -215,6 +215,7 @@
     <ClInclude Include="txqueue.h" />
     <ClInclude Include="wdi_chip_ops.h" />
     <ClInclude Include="wdi_frame.h" />
+    <ClInclude Include="wdi_scan_cache.h" />
     <ClInclude Include="wdihandlers.h" />
     <ClInclude Include="wifidevice.h" />
   </ItemGroup>
@@ -223,11 +224,12 @@
     <ClCompile Include="chip_fake.cpp" />
     <ClCompile Include="device.cpp" />
     <ClCompile Include="driver.cpp" />
-    <ClCompile Include="fakebss.cpp" />
+    <ClCompile Include="chip_fake_bss.cpp" />
     <ClCompile Include="power.cpp" />
     <ClCompile Include="rxqueue.cpp" />
     <ClCompile Include="txqueue.cpp" />
     <ClCompile Include="wdi_frame.cpp" />
+    <ClCompile Include="wdi_scan_cache.cpp" />
     <ClCompile Include="wdihandlers.cpp" />
     <ClCompile Include="wifidevice.cpp" />
   </ItemGroup>

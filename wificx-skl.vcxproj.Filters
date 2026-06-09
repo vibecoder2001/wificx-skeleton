@@ -44,7 +44,7 @@
     <ClCompile Include="driver.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="fakebss.cpp">
+    <ClCompile Include="chip_fake_bss.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="power.cpp">
@@ -57,6 +57,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="wdi_frame.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="wdi_scan_cache.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="wdihandlers.cpp">
@@ -76,13 +79,16 @@
     <ClInclude Include="device.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="fakebss.h">
+    <ClInclude Include="chip_fake_bss.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="wdi_chip_ops.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="wdi_frame.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="wdi_scan_cache.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="forward.h">

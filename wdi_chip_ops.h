@@ -22,18 +22,6 @@
 // would stash its dev/MCU/H2C handle here.
 typedef void* WDI_CHIP_CTX;
 
-// Raw scan-result entry handed from the chip backend to the WDI BSS-
-// indication path. Phase 0 keeps this minimal — Phase 2 replaces the
-// caller's static array with a scan-result cache and may grow this
-// struct (probe-response merge, age, beacon TSF).
-typedef struct _WDI_BSS_RAW_ENTRY {
-    UCHAR  Bssid[6];
-    UINT32 ChannelCenterFrequencyMhz;
-    INT32  RssiDbm;
-    const UINT8* BeaconBuffer;   // 802.11 mgmt body (post-header)
-    SIZE_T BeaconLength;
-} WDI_BSS_RAW_ENTRY;
-
 typedef struct _WDI_CHIP_OPS {
     //
     // Lifecycle.
@@ -56,19 +44,23 @@ typedef struct _WDI_CHIP_OPS {
     NTSTATUS (*SetRadio)(_In_opt_ WDI_CHIP_CTX Ctx, _In_ BOOLEAN SoftOn);
 
     //
-    // Scan: fill the caller's array with up to MaxCount BSS entries.
-    // Returns the count actually written via *OutCount. Returning
-    // STATUS_SUCCESS with *OutCount == 0 is valid and means "scan
-    // completed but no BSSes were found".
+    // Scan.
     //
-    // Phase-0 contract: synchronous, returns a synthetic list every
-    // call. Phase 2 will replace this surface with an explicit
-    // StartScan(channels, ssids) + AbortScan() + a result cache that
-    // the backend feeds asynchronously.
+    // StartScan runs on a workitem at PASSIVE_LEVEL. The backend
+    // must push every discovered BSS into the shared scan cache
+    // (WdiDeviceGetScanCache(WdfDevice) + WdiScanCacheInsert), then
+    // return. The WDI layer drains the cache afterwards to emit
+    // WDI_INDICATION_BSS_ENTRY_LIST and WDI_INDICATION_SCAN_COMPLETE.
     //
-    NTSTATUS (*GetScanResults)(_In_opt_ WDI_CHIP_CTX Ctx,
-                               _Out_writes_to_(MaxCount, *OutCount)
-                                   WDI_BSS_RAW_ENTRY* Entries,
-                               _In_ SIZE_T MaxCount,
-                               _Out_ SIZE_T* OutCount);
+    // The fake backend performs StartScan synchronously by pushing
+    // a few synthetic entries. A real backend would issue its MCU
+    // scan command and either block until completion (legal here —
+    // we're on a workitem) or queue completion through a separate
+    // event and have StartScan block on it.
+    //
+    // AbortScan is optional and may be NULL — provided for future
+    // OS-cancelled-scan paths.
+    //
+    NTSTATUS (*StartScan)(_In_ WDFDEVICE WdfDevice, _In_opt_ WDI_CHIP_CTX Ctx);
+    NTSTATUS (*AbortScan)(_In_ WDFDEVICE WdfDevice, _In_opt_ WDI_CHIP_CTX Ctx);
 } WDI_CHIP_OPS;

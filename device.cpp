@@ -194,6 +194,12 @@ MtkInitializeHardware(
     pDevice->OsWdiVersion = WifiDeviceGetOsWdiVersion(pDevice->FxDevice);
     DbgPrint("MTK: OS WDI version = 0x%x\n", pDevice->OsWdiVersion);
 
+    // Shared scan cache the chip backend fills and the WDI layer
+    // drains. Size 32 is enough for the synthetic backend and gives
+    // real backends headroom for a typical home environment.
+    GOTO_IF_NOT_NT_SUCCESS(Exit, status,
+        WdiScanCacheCreate(32, &pDevice->ScanCache));
+
     // Install the chip backend. Real-HW forks swap ChipFakeGetOps()
     // for their own ChipXxxGetOps() here.
     pDevice->ChipOps = ChipFakeGetOps();
@@ -240,6 +246,11 @@ EvtDeviceReleaseHardware(
         devContext->ChipOps->Deinit(device, devContext->ChipCtx);
     }
 
+    if (devContext->ScanCache) {
+        WdiScanCacheDestroy(devContext->ScanCache);
+        devContext->ScanCache = NULL;
+    }
+
     NTSTATUS status = STATUS_SUCCESS;
     TraceExitResult(status);
     return status;
@@ -271,9 +282,16 @@ EvtScanCompleteWorkItem(
         dev->ActiveScanPortId = portId;
         dev->ActiveScanTransactionId = txnId;
 
-        // BSS_ENTRY_LIST first, then SCAN_COMPLETE — matches Realtek WDI
-        // sample order. The Task base handler routes BSS into the list
-        // manager while the Task is outstanding.
+        // Ask the backend to run its scan and push results into the
+        // shared cache. Synchronous from our perspective: when this
+        // returns we drain whatever the backend put in.
+        if (dev->ChipOps && dev->ChipOps->StartScan) {
+            (void)dev->ChipOps->StartScan(wdfDevice, dev->ChipCtx);
+        }
+
+        // BSS_ENTRY_LIST first, then SCAN_COMPLETE — matches the
+        // Realtek WDI sample order. The Task base handler routes BSS
+        // into the list manager while the Task is outstanding.
         WdiEmitBssEntryList(wdfDevice);
 
         WDFMEMORY memory = NULL;

@@ -1,15 +1,17 @@
 #include "precomp.h"
 #include "chip_fake.h"
-#include "fakebss.h"
+#include "chip_fake_bss.h"
+#include "wdihandlers.h"      // WdiDeviceGetScanCache
+#include "wdi_scan_cache.h"
 
 //
 // Fake chip backend. Implements WDI_CHIP_OPS with synthetic behavior
 // so the skeleton loads on Hyper-V without real hardware.
 //
-// Phase 0 wraps the existing fakebss.cpp table behind the new vtable;
-// the table itself stays as-is and gets replaced in Phase 2 by a real
-// scan-result cache (at which point fakebss.cpp will be renamed to
-// chip_fake_bss.cpp — the fake chip's private synthetic BSS source).
+// Phase 2: StartScan clears the scan cache and pushes the static
+// fakebss table into it. The WDI layer drains the cache afterwards
+// to emit BSS_ENTRY_LIST + SCAN_COMPLETE, exactly like a real
+// backend would after firmware-driven scan results.
 //
 
 static NTSTATUS
@@ -36,24 +38,33 @@ FakeSetRadio(_In_opt_ WDI_CHIP_CTX /*Ctx*/, _In_ BOOLEAN /*SoftOn*/)
 }
 
 static NTSTATUS
-FakeGetScanResults(_In_opt_ WDI_CHIP_CTX /*Ctx*/,
-                   _Out_writes_to_(MaxCount, *OutCount)
-                       WDI_BSS_RAW_ENTRY* Entries,
-                   _In_ SIZE_T MaxCount,
-                   _Out_ SIZE_T* OutCount)
+FakeStartScan(_In_ WDFDEVICE WdfDevice, _In_opt_ WDI_CHIP_CTX /*Ctx*/)
 {
+    WDI_SCAN_CACHE* cache = WdiDeviceGetScanCache(WdfDevice);
+    if (!cache) return STATUS_DEVICE_NOT_READY;
+
+    // Fresh scan: rebuild the cache from scratch each time. A real
+    // backend may instead accumulate with eviction policy.
+    WdiScanCacheClear(cache);
+
     SIZE_T tableCount = 0;
     const FAKE_BSS_ENTRY* table = FakeBssGetTable(&tableCount);
-
-    SIZE_T n = tableCount < MaxCount ? tableCount : MaxCount;
-    for (SIZE_T i = 0; i < n; ++i) {
-        RtlCopyMemory(Entries[i].Bssid, table[i].Bssid, 6);
-        Entries[i].ChannelCenterFrequencyMhz = table[i].ChannelCenterFrequencyMhz;
-        Entries[i].RssiDbm                   = table[i].RssiDbm;
-        Entries[i].BeaconBuffer              = table[i].BeaconBuffer;
-        Entries[i].BeaconLength              = table[i].BeaconLength;
+    for (SIZE_T i = 0; i < tableCount; ++i) {
+        (void)WdiScanCacheInsert(
+            cache,
+            table[i].Bssid,
+            table[i].ChannelCenterFrequencyMhz,
+            table[i].RssiDbm,
+            table[i].BeaconBuffer,
+            table[i].BeaconLength);
     }
-    *OutCount = n;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+FakeAbortScan(_In_ WDFDEVICE /*WdfDevice*/, _In_opt_ WDI_CHIP_CTX /*Ctx*/)
+{
+    // Fake scan is synchronous; there's nothing to cancel.
     return STATUS_SUCCESS;
 }
 
@@ -61,7 +72,8 @@ static const WDI_CHIP_OPS g_FakeOps = {
     FakeInit,
     FakeDeinit,
     FakeSetRadio,
-    FakeGetScanResults,
+    FakeStartScan,
+    FakeAbortScan,
 };
 
 const WDI_CHIP_OPS*

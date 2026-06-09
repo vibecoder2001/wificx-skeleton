@@ -1,5 +1,5 @@
 #include "precomp.h"
-#include "fakebss.h"
+#include "chip_fake_bss.h"
 #include "wdi_frame.h"
 
 static FAKE_BSS_ENTRY g_FakeBss[FAKE_BSS_COUNT] = {

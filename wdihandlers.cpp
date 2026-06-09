@@ -5,6 +5,7 @@
 #include "adapter.h"
 #include "wdihandlers.h"
 #include "wdi_frame.h"
+#include "wdi_scan_cache.h"
 
 // The TLV generator (WificxTLVGenParse.lib) and its ArrayOfElements<T>
 // templates call standard C++ new/delete. Kernel mode has no CRT, so
@@ -346,48 +347,63 @@ static NTSTATUS HandleDot11Reset(WDFDEVICE WdfDevice, WIFIREQUEST req,
 
 // ---------- BSS-list indication (TLV-encoded) ----------
 
+WDI_SCAN_CACHE*
+WdiDeviceGetScanCache(_In_ WDFDEVICE WdfDevice)
+{
+    return MtkGetDeviceContext(WdfDevice)->ScanCache;
+}
+
 void
 WdiEmitBssEntryList(_In_ WDFDEVICE WdfDevice)
 {
     MTK_DEVICE* dev = MtkGetDeviceContext(WdfDevice);
+    if (!dev->ScanCache) return;
 
-    // Pull raw entries from the chip backend (fake or real). Cap at
-    // 8 — Phase 2 will replace this with a paged drain from a real
-    // scan-result cache.
-    constexpr SIZE_T MAX_ENTRIES = 8;
-    WDI_BSS_RAW_ENTRY raw[MAX_ENTRIES];
-    SIZE_T rawCount = 0;
-    if (!dev->ChipOps || !dev->ChipOps->GetScanResults) {
+    // Drain a snapshot from the cache. Each snapshot entry owns its
+    // beacon bytes inline, so the WDI_BSS_ENTRY_CONTAINER pointers
+    // below stay valid through TLV generation as long as `snap`
+    // lives. Heap-allocated to keep the kernel stack small.
+    constexpr SIZE_T MAX_ENTRIES = 32;
+    SIZE_T snapBytes = MAX_ENTRIES * sizeof(WDI_SCAN_CACHE_ENTRY);
+    WDI_SCAN_CACHE_ENTRY* snap =
+        (WDI_SCAN_CACHE_ENTRY*)ExAllocatePool2(POOL_FLAG_NON_PAGED, snapBytes, 'sBiW');
+    if (!snap) return;
+
+    SIZE_T rawCount = WdiScanCacheSnapshot(dev->ScanCache, snap, MAX_ENTRIES);
+    if (rawCount == 0) {
+        ExFreePool(snap);
         return;
     }
-    NTSTATUS srStatus = dev->ChipOps->GetScanResults(
-        dev->ChipCtx, raw, MAX_ENTRIES, &rawCount);
-    if (!NT_SUCCESS(srStatus) || rawCount == 0) {
+
+    WDI_BSS_ENTRY_CONTAINER* entries =
+        (WDI_BSS_ENTRY_CONTAINER*)ExAllocatePool2(POOL_FLAG_NON_PAGED,
+            rawCount * sizeof(WDI_BSS_ENTRY_CONTAINER), 'eBiW');
+    if (!entries) {
+        ExFreePool(snap);
         return;
     }
-
-    WDI_BSS_ENTRY_CONTAINER entries[MAX_ENTRIES];
+    // ExAllocatePool2 zero-initializes — matches what a stack-array
+    // default-construction would give the TLV generator (Optional
+    // flags clear, no IsPresent bits set spuriously).
 
     for (SIZE_T i = 0; i < rawCount; ++i) {
         WDI_BSS_ENTRY_CONTAINER& e = entries[i];
 
-        RtlCopyMemory(e.BSSID.Address, raw[i].Bssid, 6);
+        RtlCopyMemory(e.BSSID.Address, snap[i].Bssid, 6);
 
-        e.SignalInfo.RSSI = raw[i].RssiDbm;
+        e.SignalInfo.RSSI = snap[i].RssiDbm;
         e.SignalInfo.LinkQuality =
-            (UINT32)max(0, min(100, (INT32)(2 * (raw[i].RssiDbm + 100))));
+            (UINT32)max(0, min(100, (INT32)(2 * (snap[i].RssiDbm + 100))));
 
-        e.ChannelInfo.ChannelNumber = WdiFreqToChannel(raw[i].ChannelCenterFrequencyMhz);
-        e.ChannelInfo.BandId = WdiFreqToBand(raw[i].ChannelCenterFrequencyMhz);
+        e.ChannelInfo.ChannelNumber = WdiFreqToChannel(snap[i].ChannelCenterFrequencyMhz);
+        e.ChannelInfo.BandId = WdiFreqToBand(snap[i].ChannelCenterFrequencyMhz);
 
         e.BeaconFrame.SimpleAssign(
-            const_cast<UINT8*>(raw[i].BeaconBuffer),
-            (UINT32)raw[i].BeaconLength);
+            snap[i].Beacon,
+            (UINT32)snap[i].BeaconLength);
         e.Optional.BeaconFrame_IsPresent = TRUE;
 
-        LARGE_INTEGER ts;
-        KeQueryTickCount(&ts);
-        e.EntryAgeInfo.HostTimeStamp = (UINT64)ts.QuadPart;
+        e.EntryAgeInfo.HostTimeStamp = (UINT64)snap[i].LastSeenTick.QuadPart;
         e.EntryAgeInfo.CachedInformation = FALSE;
         e.Optional.EntryAgeInfo_IsPresent = TRUE;
     }
@@ -412,6 +428,8 @@ WdiEmitBssEntryList(_In_ WDFDEVICE WdfDevice)
     if (gs != NDIS_STATUS_SUCCESS || genBuf == NULL || bufLen < sizeof(WDI_MESSAGE_HEADER)) {
         DbgPrint("MTK: GenerateWdiIndicationBssEntryListFromIhv failed 0x%x\n", gs);
         if (genBuf) FreeGenerated(genBuf);
+        ExFreePool(entries);
+        ExFreePool(snap);
         return;
     }
 
@@ -444,4 +462,6 @@ WdiEmitBssEntryList(_In_ WDFDEVICE WdfDevice)
     }
 
     FreeGenerated(genBuf);
+    ExFreePool(entries);
+    ExFreePool(snap);
 }

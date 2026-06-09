@@ -1,6 +1,7 @@
 #pragma once
 
 #include "wdi_chip_ops.h"
+#include "wdi_scan_cache.h"
 
 typedef struct _MTK_DEVICE
 {
@@ -12,6 +13,12 @@ typedef struct _MTK_DEVICE
     // its own ChipXxxGetOps() there. See wdi_chip_ops.h.
     const WDI_CHIP_OPS* ChipOps;
     WDI_CHIP_CTX        ChipCtx;
+
+    // Shared scan-result cache. The chip backend fills it (via
+    // WdiScanCacheInsert) during its StartScan op; the WDI workitem
+    // drains it afterwards into BSS_ENTRY_LIST. Accessor:
+    // WdiDeviceGetScanCache(WdfDevice).
+    WDI_SCAN_CACHE* ScanCache;
 
     // Phase 3: WDI session state
     BOOLEAN AdapterOpened;
